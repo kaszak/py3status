@@ -16,34 +16,40 @@
 #  
 
 import json
-import re
 from subprocess import Popen, PIPE
 from socket import socket
 from threading import Thread, Event
 from time import sleep, strftime
-import os
+from configparser import ConfigParser
+from os.path import expanduser
 
 from mpd import MPDClient
 from psutil import disk_partitions, disk_usage
 from alsaaudio import Mixer, ALSAAudioError
 
-#Files containing CPU temperatures
-CORE0        = '/sys/devices/platform/coretemp.0/temp2_input'
-CORE1        = '/sys/devices/platform/coretemp.0/temp3_input'
-
 class WorkerThread(Thread):
     '''Skeleton Class for all worker threads.'''
-    def __init__(self, name, interval=1, **kwargs):
+    def __init__(self, name, class_type, order, interval=1, 
+                 color_good="#597B20", 
+                 color_warning="#DED838", 
+                 color_critical="#C12121", 
+                **kwargs):
         super().__init__(**kwargs)
         self.stopped = Event()
         self.paused = Event()
         self.show = False
         self.urgent = False
-        self.interval = interval
+        self.interval = int(interval)
         self.name = name
-        self.color_good = "#597B20"
-        self.color_warning = "#DED838"
-        self.color_critical =  "#C12121"
+        self.color_good = color_good
+        self.color_warning = color_warning
+        self.color_critical =  color_critical
+        
+        # Kludge, fix that!
+        self.class_type = class_type
+        self.order = order
+        del self.order
+        del self.class_type
         
         # Subclasses need to upadte this value in their's _update_data()
         # It's type generally doesn't matter
@@ -84,8 +90,8 @@ class GetTemp(WorkerThread):
     various pc components.'''
     def __init__(self, temp_warning, temp_critical, **kwargs):
         super().__init__(**kwargs)
-        self.temp_warning = temp_warning
-        self.temp_critical = temp_critical
+        self.temp_warning = float(temp_warning)
+        self.temp_critical = float(temp_critical)
         
     def _check_temp(self, temp):
         '''If the measured temperature is higher than temp_critical 
@@ -107,7 +113,8 @@ class GetTemp(WorkerThread):
             
     def get_output(self):
         output = {'full_text': '{}: {}C'.format(self.name, self._data),
-            'name': self.name, 'urgent': self.urgent}
+                  'name': self.name, 
+                  'urgent': self.urgent}
         if self.color:
             output['color'] = self.color
         return output
@@ -119,10 +126,10 @@ class MPDCurrentSong(WorkerThread):
     currently playing. If ConnectionError exception is encountered, 
     try to reconnect until succesfull.'''
     def __init__(self, host='localhost', port=6600, interval=1, 
-            name='Currently Playing', **kwargs):
+                 name='Currently Playing', **kwargs):
         super().__init__(interval=interval,name=name, **kwargs)
         self.host = host
-        self.port = port
+        self.port = int(port)
         self.mpd_client = MPDClient()
         self._connect_to_mpd()
         
@@ -137,7 +144,8 @@ class MPDCurrentSong(WorkerThread):
         '''Updates self._data to a string in a format "Artist - Song"'''
         self._data = ''
         try:
-            if self.mpd_client.status()['state'] == 'stop' or self.mpd_client.status()['state'] == 'pause':
+            if (self.mpd_client.status()['state'] == 'stop' or 
+                self.mpd_client.status()['state'] == 'pause'):
                 self.show = False
             else:
                 song = self.mpd_client.currentsong()
@@ -159,15 +167,16 @@ class MPDCurrentSong(WorkerThread):
     
 class HDDTemp(GetTemp):
     '''Monitors HDD temperature, depends on hddtemp daemon running.'''
-    def __init__(self, host='localhost', port=7634, interval=60, name='HDD', **kwargs):
+    def __init__(self, host='localhost', port=7634, 
+                 interval=60, name='HDD', **kwargs):
         super().__init__(interval=interval, name=name, **kwargs)
         self.host = host
-        self.port = port
+        self.port = int(port)
     
     def _update_data(self):
         temp = 0
-        # Hddtemp sometimes sends empty data, try until it sends something 
-        # worthwhile.
+        # Hddtemp sometimes sends empty data, try until it sends 
+        # something worthwhile.
         while not temp:
             hdd_temp = socket()
             hdd_temp.connect((self.host, self.port))
@@ -214,7 +223,7 @@ class CPUTemp(GetTemp):
     work.'''
     def __init__(self, temp_files, interval=2, name='CPU', **kwargs):
         super().__init__(interval=interval, name=name,**kwargs)
-        self.temp_files = temp_files
+        self.temp_files = json.loads(temp_files)
         
     def _update_data(self):
         max_temp = 0
@@ -236,9 +245,9 @@ class DiskUsage(WorkerThread):
     free space on one or more partitions is less than 
     (100 - self.percentage)%'''
     def __init__(self, interval=30, percentage=95, 
-            name="Disk Usage", **kwargs):
+                 name="Disk Usage", **kwargs):
         super().__init__(interval=interval, name=name,**kwargs)
-        self.percentage = percentage 
+        self.percentage = float(percentage)
         
     def _update_partitions(self):
         self.partitions = disk_partitions()
@@ -274,8 +283,8 @@ class DiskUsage(WorkerThread):
         output = []
         for entry in self._data:
             output.append({'full_text': '{}: {}'.format(entry['point'], 
-                entry['free']),
-                'name': self.name, 'urgent': self.urgent})
+                           entry['free']),
+                           'name': self.name, 'urgent': self.urgent})
         return output
             
     def human_size(self, byte):
@@ -304,7 +313,9 @@ class Date(WorkerThread):
         self._data.append(strftime("%H:%M"))
     
     def get_output(self):
-        output = {'full_text': self._data[0],'short_text': self._data[1], 'name': self.name}
+        output = {'full_text': self._data[0],
+                  'short_text': self._data[1], 
+                  'name': self.name}
         return output
         
 class BatteryStatus(WorkerThread):
@@ -317,7 +328,7 @@ class BatteryStatus(WorkerThread):
             **kwargs):
         
         super().__init__(interval=interval, name=name,**kwargs)
-        self.critical = critical
+        self.critical = float(critical)
         self.battery_file_full = battery_file_full
         self.battery_file_present = battery_file_present
         self.battery_file_charge = battery_file_charge
@@ -363,8 +374,11 @@ class BatteryStatus(WorkerThread):
         self.show = True
         
     def get_output(self):
-        output = {'full_text': '{} {:.0f}%'.format(self._data[0], self._data[1]), 
-            'short_text': self._data[0], 'name': self.name,'urgent': self.urgent}
+        output = {'full_text': '{} {:.0f}%'.format(self._data[0],
+                   self._data[1]), 
+                  'short_text': self._data[0], 
+                  'name': self.name, 
+                  'urgent': self.urgent}
         return output
 
 class NetworkStatus(WorkerThread):
@@ -373,7 +387,10 @@ class NetworkStatus(WorkerThread):
             interval=2, name='Network', **kwargs):
         super().__init__(interval=interval, name=name,**kwargs)
         self.interface = interface
-        self.always_show = always_show
+        if always_show == '0':
+            self.always_show = False
+        else:
+            self.always_show = True
         self.show = always_show
         self._data = {
             'connected': False,
@@ -412,21 +429,32 @@ class NetworkStatus(WorkerThread):
         return output
     
 class Volume(WorkerThread):
-    '''Monitor volume of the given channel usilg alssaudio python library.'''
-    def __init__(self, channel='Master', interval=1, name='Volume', **kwargs):
+    '''Monitor volume of the given channel usilg alssaudio python 
+    library.'''
+    def __init__(self, channel='Master', interval=1, 
+                 name='Volume', mixer_id=0, card_index=0, **kwargs):
         super().__init__(interval=interval, name=name,**kwargs)
         self.channel = channel
+        self.mixer_id = int(mixer_id)
+        self.card_index = int(card_index)
         self.show = True
-        self.amixer = Mixer(control=self.channel)
+        self.amixer = Mixer(control=self.channel, 
+                            id=self.mixer_id,
+                            cardindex=self.card_index)
         self._data = []
         for i, channel in enumerate(self.amixer.getvolume()):
-            self._data.append({'channel': i, 'level': 0, 'muted': False})
+            self._data.append({'channel': i, 
+                               'level': 0, 
+                               'muted': False})
     
     def _update_data(self):
-        self.amixer = Mixer(control=self.channel)
+        self.amixer = Mixer(control=self.channel, 
+                            id=self.mixer_id,
+                            cardindex=self.card_index)
         self.color = ''
         try:
-            for i, channel in enumerate(zip(self.amixer.getmute(), self.amixer.getvolume())):
+            for i, channel in enumerate(zip(self.amixer.getmute(), 
+                                            self.amixer.getvolume())):
                 self._data[i]['level'] = channel[1]
                 if channel[0]:
                     self._data[i]['muted'] = True
@@ -450,58 +478,61 @@ class Volume(WorkerThread):
                 
         
 class StatusBar():
-    def __init__(self, interval=1):
-        self.interval = interval
+    def __init__(self):
+        home = expanduser('~')
+        self.config = ConfigParser()
+        self.config.read(['py3status.conf', 
+                          '/etc/py3status.conf', 
+                          expanduser('~/.py3status.conf')])
+        self.interval = int(self.config['DEFAULT']['interval'])
+        self.threads = []
+        self._start_threads()
         
-def main():
-    version = {'version': 1}
-    threads = []
-    comma = ''
-    mpd_thread = MPDCurrentSong(interval=1)
-    hdd_thread = HDDTemp(temp_warning=60, temp_critical=70)
-    gpu_thread = GPUTemp(temp_warning=80, temp_critical=90, vendor='catalyst')
-    cpu_thread = CPUTemp(temp_warning=80, temp_critical=90, temp_files=[CORE0, CORE1])
-    df_thread = DiskUsage()
-    date = Date()
-    battery = BatteryStatus()
-    network = NetworkStatus(interface='wlan0', always_show=False)
-    volume = Volume()
+    def _start_threads(self):
+        types = {
+	    "MPDCurrentSong": MPDCurrentSong, 
+	    "HDDTemp": HDDTemp, 
+	    "GPUTemp": GPUTemp, 
+	    "CPUTemp": CPUTemp, 
+	    "DiskUsage": DiskUsage, 
+	    "NetworkStatus": NetworkStatus, 
+	    "BatteryStatus": BatteryStatus, 
+	    "Volume": Volume, 
+	    "Date": Date
+        }
+        order = json.loads(self.config['DEFAULT']['order'])
+        for entry in order:
+            self.threads.append(types[self.config[entry]['class_type']](
+                                **self.config[entry]))
+        for thread in self.threads:
+            thread.start()
+        
+    def loop(self):
+        version = {'version': 1}
+        comma = ''
 
-    
-    threads.append(mpd_thread)
-    threads.append(hdd_thread)
-    threads.append(gpu_thread)
-    threads.append(cpu_thread)
-    threads.append(df_thread)
-    threads.append(network)
-    threads.append(battery)
-    threads.append(volume)
-    threads.append(date)
-    
-    for thread in threads:
-        thread.start()
+        print(json.dumps(version))
+        print('[')
         
-    print(json.dumps(version))
-    print('[')
-    
-    while True:
-        try:
-            items = []
-            for thread in threads:
-                if thread.show:
-                    item = thread.get_output()
-                    if isinstance(item, list):
-                        items.extend(item)
-                    else:
-                        items.append(item)
-                    
-            print(comma, json.dumps(items), flush=True, sep='')
-            comma = ','
-            sleep(0.3)
-        except KeyboardInterrupt:
-            for thread in threads:
-                thread.stop()
-            raise
-        
+        while True:
+            try:
+                items = []
+                for thread in self.threads:
+                    if thread.show:
+                        item = thread.get_output()
+                        if isinstance(item, list):
+                            items.extend(item)
+                        else:
+                            items.append(item)
+                        
+                print(comma, json.dumps(items), flush=True, sep='')
+                comma = ','
+                sleep(self.interval)
+            except KeyboardInterrupt:
+                for thread in self.threads:
+                    thread.stop()
+                raise
+                
 if __name__ == '__main__':
-    main()
+    statusbar = StatusBar()
+    statusbar.loop()
