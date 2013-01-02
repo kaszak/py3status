@@ -33,7 +33,7 @@ class WorkerThread(Thread):
                  color_good="#597B20", 
                  color_warning="#DED838", 
                  color_critical="#C12121", 
-                **kwargs):
+                 **kwargs):
         super().__init__(**kwargs)
         self.stopped = Event()
         self.paused = Event()
@@ -44,6 +44,7 @@ class WorkerThread(Thread):
         self.color_good = color_good
         self.color_warning = color_warning
         self.color_critical =  color_critical
+        self.color = ''
         
         # Kludge, fix that!
         self.class_type = class_type
@@ -52,10 +53,10 @@ class WorkerThread(Thread):
         del self.class_type
         
         # Subclasses need to upadte this value in their's _update_data()
-        # It's type generally doesn't matter
-        self._data = ''
+        # if they are going to use the default get_output()
+        self._data = {'full_text': '',
+                      'short_text': ''}
 
-    
     def stop(self):
         '''Breaks the run() loop.'''
         self.stopped.set()
@@ -71,10 +72,15 @@ class WorkerThread(Thread):
         format. Should be overrided by subclasses to accomodate to 
         their's specific self._data type, altough it does provide 
         rudimentary functionality.'''
-        output = {'full_text': self._data, 
+        output = {'full_text': self._data['full_text'],
+                  
                   'name': self.name, 
                   'urgent': self.urgent
                   }
+        if self.color:
+            output['color'] = self.color
+        if self._data['short_text']:
+            output['short_text'] = self._data['short_text']
         return output
     
     def run(self):
@@ -108,18 +114,8 @@ class GetTemp(WorkerThread):
         elif temp < self.temp_warning:
             self.show = False
             self.urgent = False
-        if self.show:
-            self._data = temp
-            
-    def get_output(self):
-        output = {'full_text': '{}: {}C'.format(self.name, self._data),
-                  'name': self.name, 
-                  'urgent': self.urgent}
-        if self.color:
-            output['color'] = self.color
-        return output
-        
-        
+        self._data['full_text'] = '{}: {}℃'.format(self.name, temp)
+
         
 class MPDCurrentSong(WorkerThread):
     '''Grabs current sog from MPD. Shows data only if MPD is 
@@ -142,7 +138,6 @@ class MPDCurrentSong(WorkerThread):
         
     def _update_data(self):
         '''Updates self._data to a string in a format "Artist - Song"'''
-        self._data = ''
         try:
             if (self.mpd_client.status()['state'] == 'stop' or 
                 self.mpd_client.status()['state'] == 'pause'):
@@ -159,7 +154,8 @@ class MPDCurrentSong(WorkerThread):
                     mpd_title = song['title']
                 else:
                     mpd_title = 'Unknown Title'
-                self._data = mpd_artist + ' - ' + mpd_title
+                self._data['full_text'] = mpd_artist + ' - ' + mpd_title
+                self._data['short_text'] = mpd_title
                 self.show = True
         except ConnectionError:
             self.show = False
@@ -260,31 +256,43 @@ class DiskUsage(WorkerThread):
         self._update_partitions()
         data_temp = []
         self._data = []
+        self.color = ''
         for partition in self.partitions:
             try:
                 usage = disk_usage(partition.mountpoint)
             except OSError:
                 pass
             else:
-                data_temp.append([partition.mountpoint, usage])
-            for entry in data_temp:
-                if entry[1].percent > self.percentage:
-                    over = True
-                    self._data.append({'point': entry[0], 
-                        'free': self.human_size(entry[1].free)})
-            if self._data:
-                self.show = True
-                self.urgent = True
-            else:
-                self.show = False
-                self.urgent = False
-                
+                data_temp.append({'point': partition.mountpoint,
+                                 'usage': usage,
+                                 'free': self.human_size(usage.free)})
+
+                for entry in data_temp:
+                    if entry['usage'].percent > self.percentage:
+                        self._data.append({'point': entry['point'], 
+                            'free': entry['free']})
+                if self._data:
+                    self.show = True
+                    self.urgent = True
+                    self.color = self.color_warning
+                else:
+                    self.show = False
+                    self.urgent = False
+                    
     def get_output(self):
         output = []
         for entry in self._data:
-            output.append({'full_text': '{}: {}'.format(entry['point'], 
-                           entry['free']),
-                           'name': self.name, 'urgent': self.urgent})
+            if not self.color:
+                output.append({'full_text': '{}: {}'.format(entry['point'], 
+                               entry['free']),
+                               'name': self.name, 'urgent': self.urgent})
+            else:
+                output.append({'full_text': '{}: {}'.format(entry['point'], 
+                               entry['free']),
+                               'name': self.name, 
+                               'urgent': self.urgent,
+                               'color': self.color})
+                
         return output
             
     def human_size(self, byte):
@@ -308,16 +316,9 @@ class Date(WorkerThread):
         self.show=True
     
     def _update_data(self):
-        self._data = []
-        self._data.append(strftime("%d-%m-%Y %H:%M"))
-        self._data.append(strftime("%H:%M"))
+        self._data['full_text'] = strftime('%d-%m-%Y %H:%M')
+        self._data['short_text'] = strftime('%H:%M')
     
-    def get_output(self):
-        output = {'full_text': self._data[0],
-                  'short_text': self._data[1], 
-                  'name': self.name}
-        return output
-        
 class BatteryStatus(WorkerThread):
     '''Monitors battery status. Lots of files!'''
     def __init__(self, interval=5, critical=5, name='Battery', 
@@ -335,10 +336,13 @@ class BatteryStatus(WorkerThread):
         self.battery_file_status = battery_file_status
         
     def _update_data(self):
+        self.color = ''
         with open(self.battery_file_present) as bat_p:
             present = bat_p.read().strip()
         if present != '1':
             self.show = False
+            self.data['full_text'] = 'No Battery'
+            self.data['short_text'] = 'No BAT'
             return
             
         with open(self.battery_file_status) as bat_s:
@@ -346,52 +350,35 @@ class BatteryStatus(WorkerThread):
         
         if status == 'Full':
             self.show = False
-            return
-        elif status =='Charging':
-            status = 'C'
             
-        elif status == 'Discharging':
-            status = 'D'
+        elif (status =='Charging') or (status == 'Discharging'):
+            status_s = status[0]
+            self.show = True
+            with open(self.battery_file_full) as bat_f:
+                full = int(bat_f.read().strip())
+        
+            with open(self.battery_file_charge) as bat_c:
+                charge = int(bat_c.read().strip())
+                
+            percentage = charge * 100 / full
+            if percentage < self.critical:
+                self.urgent = True
+                self.color = self.color_critical
+            else:
+                self.urgent = False
+            self._data['full_text'] = '{} {}%'.format(status, percentage)
+            self._data['short_text'] = '{} {}%'.format(status_s, percentage)
         
         elif status == 'Unknown':
             self.show = False
-            return
-        
-        self._data = []        
-        with open(self.battery_file_full) as bat_f:
-            full = int(bat_f.read().strip())
-        
-        with open(self.battery_file_charge) as bat_c:
-            charge = int(bat_c.read().strip())
-        
-        percentage = charge * 100 / full
-        if percentage < self.critical:
-            self.urgent = True
-        else:
-            self.urgent = False
-        self._data.append(status)
-        self._data.append(percentage)
-        self.show = True
-        
-    def get_output(self):
-        output = {'full_text': '{} {:.0f}%'.format(self._data[0],
-                   self._data[1]), 
-                  'short_text': self._data[0], 
-                  'name': self.name, 
-                  'urgent': self.urgent}
-        return output
 
 class NetworkStatus(WorkerThread):
     '''Monitor if given interface is connected to the internet.'''
-    def __init__(self, interface, always_show=False,
+    def __init__(self, interface,
             interval=2, name='Network', **kwargs):
         super().__init__(interval=interval, name=name,**kwargs)
         self.interface = interface
-        if always_show == '0':
-            self.always_show = False
-        else:
-            self.always_show = True
-        self.show = always_show
+        self.show = True
         self._data = {
             'connected': False,
             'inet': ''
@@ -406,13 +393,11 @@ class NetworkStatus(WorkerThread):
             self._data['connected'] = True
             self._data['inet'] = output[output.index('inet') + 1]
             self.color = self.color_good
-            if not self.always_show:
-                self.show = False
+            self.show = False
         else:
             self.show = True
             self._data['connected'] = False
             self.color = self.color_good
-
     def get_output(self):
         if self._data['connected'] == True:
             output = {'full_text': '{}: {}'.format(self.interface, 
@@ -426,6 +411,7 @@ class NetworkStatus(WorkerThread):
             'name': self.name}
         if self.color:
             output['color'] = self.color
+        print(output)
         return output
     
 class Volume(WorkerThread):
@@ -481,9 +467,10 @@ class StatusBar():
     def __init__(self):
         home = expanduser('~')
         self.config = ConfigParser()
-        self.config.read(['py3status.conf', 
-                          '/etc/py3status.conf', 
-                          expanduser('~/.py3status.conf')])
+        self.config.read([expanduser('~/.py3status.conf'),
+                          'py3status.conf', 
+                          '/etc/py3status.conf'
+                          ])
         self.interval = int(self.config['DEFAULT']['interval'])
         self.threads = []
         self._start_threads()
@@ -507,7 +494,7 @@ class StatusBar():
         for thread in self.threads:
             thread.start()
         
-    def loop(self):
+    def run(self):
         version = {'version': 1}
         comma = ''
 
@@ -535,4 +522,4 @@ class StatusBar():
                 
 if __name__ == '__main__':
     statusbar = StatusBar()
-    statusbar.loop()
+    statusbar.run()
