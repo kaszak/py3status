@@ -372,47 +372,35 @@ class BatteryStatus(WorkerThread):
         elif status == 'Unknown':
             self.show = False
 
-class NetworkStatus(WorkerThread):
+class WirelessStatus(WorkerThread):
     '''Monitor if given interface is connected to the internet.'''
     def __init__(self, interface,
             interval=2, name='Network', **kwargs):
         super().__init__(interval=interval, name=name,**kwargs)
         self.interface = interface
         self.show = True
-        self._data = {
-            'connected': False,
-            'inet': ''
-            }
     
     def _update_data(self):
         self.color = ''
-        command = 'ifconfig {}'.format(self.interface)
-        ifconfig = Popen(command.split(), stdout=PIPE)
-        output = ifconfig.stdout.read().decode().split()
-        if 'inet' in output:
-            self._data['connected'] = True
-            self._data['inet'] = output[output.index('inet') + 1]
-            self.color = self.color_good
-            self.show = False
-        else:
-            self.show = True
-            self._data['connected'] = False
-            self.color = self.color_good
-    def get_output(self):
-        if self._data['connected'] == True:
-            output = {'full_text': '{}: {}'.format(self.interface, 
-            self._data['inet']),
-            'short_text': self.interface, 'name': self.name}
+        command = 'iwgetid --raw {}'.format(self.interface)
+        essid_command = Popen(command.split(), stdout=PIPE)
+        if essid_command.poll() == 255:
+            self._data['full_text'] = '{}: {} is not wireless'.format(
+                self.name, self.interface)
+            self._data['short_text'] = '{}!'.format(self.name)
+            self.color = self.color_critical
+            self.urgent = True
+        output = essid_command.stdout.read().decode().strip()
         
+        if output != '':
+            self._data['full_text'] = output
+            self._data['short_text'] = output
         else:
-            output = {'full_text': '{}: {}'.format(self.interface, 
-            'Disconnected'),
-            'short_text': '{}: {}'.format(self.interface, 'D/C'), 
-            'name': self.name}
-        if self.color:
-            output['color'] = self.color
-        print(output)
-        return output
+            self._data['full_text'] = '{} disconnected'.format(self.interface)
+            self._data['short_text'] = '{} D/C'.format(self.interface)
+            self.color = self.color_critical
+            self.urgent = True
+
     
 class Volume(WorkerThread):
     '''Monitor volume of the given channel usilg alssaudio python 
@@ -473,7 +461,6 @@ class StatusBar():
                           ])
         self.interval = int(self.config['DEFAULT']['interval'])
         self.threads = []
-        self._start_threads()
         
     def _start_threads(self):
         types = {
@@ -482,7 +469,7 @@ class StatusBar():
 	    "GPUTemp": GPUTemp, 
 	    "CPUTemp": CPUTemp, 
 	    "DiskUsage": DiskUsage, 
-	    "NetworkStatus": NetworkStatus, 
+	    "WirelessStatus": WirelessStatus, 
 	    "BatteryStatus": BatteryStatus, 
 	    "Volume": Volume, 
 	    "Date": Date
@@ -495,11 +482,12 @@ class StatusBar():
             thread.start()
         
     def run(self):
-        version = {'version': 1}
         comma = ''
 
-        print(json.dumps(version))
-        print('[')
+        print('{"version":1}', flush=True)
+        print('[', flush=True)
+        
+        self._start_threads()
         
         while True:
             try:
