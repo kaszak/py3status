@@ -27,10 +27,10 @@ from mpd import MPDClient
 from psutil import disk_partitions, disk_usage
 from alsaaudio import Mixer, ALSAAudioError
 
+
 class WorkerThread(Thread):
     '''Skeleton Class for all worker threads.'''
     def __init__(self, name, interval=1, 
-                 color_good="#597B20", 
                  color_warning="#DED838", 
                  color_critical="#C12121", 
                  **kwargs):
@@ -41,15 +41,16 @@ class WorkerThread(Thread):
         self.urgent = False
         self.interval = int(interval)
         self.name = name
-        self.color_good = color_good
         self.color_warning = color_warning
         self.color_critical =  color_critical
         self.color = ''
         
         # Subclasses need to upadte this value in their's _update_data()
         # if they are going to use the default get_output()
-        self._data = {'full_text': '',
-                      'short_text': ''}
+        self._data_orig = {'full_text': '',
+                           'short_text': '',
+                           'color': ''
+                           }
 
     def stop(self):
         '''Breaks the run() loop.'''
@@ -62,17 +63,13 @@ class WorkerThread(Thread):
         pass
     
     def get_output(self):
-        '''This function is supposed to output data in a i3bar-friendly
-        format. Should be overrided by subclasses to accomodate to 
-        their's specific self._data type, altough it does provide 
-        rudimentary functionality.'''
+        '''Returns a dictionary redy to be sent to i3bar'''
         output = {'full_text': self._data['full_text'],
-                  
                   'name': self.name, 
                   'urgent': self.urgent
                   }
-        if self.color:
-            output['color'] = self.color
+        if self._data['color']:
+            output['color'] = self._data['color']
         if self._data['short_text']:
             output['short_text'] = self._data['short_text']
         return output
@@ -80,11 +77,12 @@ class WorkerThread(Thread):
     def run(self):
         '''Main worker loop.'''
         while not self.stopped.is_set():
+            # Empties _data every run
+            self._data = self._data_orig.copy()
             self._update_data()
             sleep(self.interval)
-        
-        
-        
+
+
 class GetTemp(WorkerThread):
     '''Skeleton Class for worker threads monitoring temperature of
     various pc components.'''
@@ -97,18 +95,17 @@ class GetTemp(WorkerThread):
         '''If the measured temperature is higher than temp_critical 
         value, display it and set urgency. Stop displaying when
         temperature drops below temp_warning threshold.'''
-        self.color = ''
         if temp >= self.temp_critical:
             self.show = True
-            self.color = self.color_critical
+            self._data['color'] = self.color_critical
             self.urgent = True
         elif self.temp_warning <= temp < self.temp_critical:
-            self.color = self.color_warning
+            self._data['color'] = self.color_warning
             self.urgent = False
         elif temp < self.temp_warning:
             self.show = False
             self.urgent = False
-        self._data['full_text'] = '{}: {}℃'.format(self.name, temp)
+        self._data['full_text'] = '{}: {}C'.format(self.name, temp)
 
         
 class MPDCurrentSong(WorkerThread):
@@ -154,6 +151,7 @@ class MPDCurrentSong(WorkerThread):
         except ConnectionError:
             self.show = False
             self._connect_to_mpd()
+
     
 class HDDTemp(GetTemp):
     '''Monitors HDD temperature, depends on hddtemp daemon running.'''
@@ -181,10 +179,11 @@ class HDDTemp(GetTemp):
                     break
                 else:
                     self._check_temp(temp)
-        
+    
+
 class GPUTemp(GetTemp):
-    '''Monitors the temperature of GPU, currently only properietary ATI 
-    and nVidia drivers work.''' 
+    '''Monitors the temperature of GPU with properietary drivers 
+    installed. Use HwmonTemp for open-source ones.''' 
     def __init__(self, vendor, interval=2, name='GPU', **kwargs):
         super().__init__(interval=interval, name=name, **kwargs)
         if vendor == 'catalyst':
@@ -205,8 +204,9 @@ class GPUTemp(GetTemp):
         output = nvidia.stdout.read()
         temp = float(output)
         self._check_temp(temp)
-    
-class CPUTemp(GetTemp):
+
+
+class HwmonTemp(GetTemp):
     '''Reads temperature from every file specified in temp_files list
     and displays the highest one. Altough this class is supposed to deal
     with CPU temperatures, any temperature file from hwmon driver should
@@ -229,66 +229,44 @@ class CPUTemp(GetTemp):
             if temp > max_temp:
                 max_temp = temp
         self._check_temp(max_temp)
+
         
 class DiskUsage(WorkerThread):
     '''Monitor disk usage using psutil interface. Shows data only when
     free space on one or more partitions is less than 
     (100 - self.percentage)%'''
-    def __init__(self, interval=30, percentage=95, 
-                 name="Disk Usage", **kwargs):
+    def __init__(self, mountpoint,
+                 interval=30, 
+                 percentage=90, 
+                 name="Disk Usage", 
+                 **kwargs):
         super().__init__(interval=interval, name=name,**kwargs)
         self.percentage = float(percentage)
-        
-    def _update_partitions(self):
-        self.partitions = disk_partitions()
-        #No need to track disk usage of read-only media
-        for partition in self.partitions[:]:
-            if partition.fstype == 'iso9660':
-                self.partitions.remove(partition)
+        self.mountpoint = mountpoint
         
     def _update_data(self):
-        self._update_partitions()
-        data_temp = []
-        self._data = []
-        self.color = ''
-        for partition in self.partitions:
-            try:
-                usage = disk_usage(partition.mountpoint)
-            except OSError:
-                pass
+        try:
+            usage = disk_usage(self.mountpoint)
+        except OSError:
+            self.show = False
+            pass
+        else:
+            if usage.percent > self.percentage:
+                self.show = True
+                self.urgent = True
+                self._data['full_text'] = '{}: {}%'.format(
+                    self.mountpoint, 
+                    usage.percent,
+                    human_size(usage.free))
+                # Last directory in mount point instead of full path
+                self._data['short_text'] = '{}: {}%}'.format(
+                    self.mountpoint.split('/')[-1], 
+                    usage.percent)
+                self._data['color'] = self.color_warning
             else:
-                data_temp.append({'point': partition.mountpoint,
-                                 'usage': usage,
-                                 'free': self.human_size(usage.free)})
+                self.show = False
+                self.urgent = False
 
-                for entry in data_temp:
-                    if entry['usage'].percent > self.percentage:
-                        self._data.append({'point': entry['point'], 
-                            'free': entry['free']})
-                if self._data:
-                    self.show = True
-                    self.urgent = True
-                    self.color = self.color_warning
-                else:
-                    self.show = False
-                    self.urgent = False
-                    
-    def get_output(self):
-        output = []
-        for entry in self._data:
-            if not self.color:
-                output.append({'full_text': '{}: {}'.format(entry['point'], 
-                               entry['free']),
-                               'name': self.name, 'urgent': self.urgent})
-            else:
-                output.append({'full_text': '{}: {}'.format(entry['point'], 
-                               entry['free']),
-                               'name': self.name, 
-                               'urgent': self.urgent,
-                               'color': self.color})
-                
-        return output
-            
     def human_size(self, byte):
         '''Present amount of bytes in human-readable format.'''
         if byte == 0:
@@ -312,6 +290,7 @@ class Date(WorkerThread):
     def _update_data(self):
         self._data['full_text'] = strftime('%d-%m-%Y %H:%M')
         self._data['short_text'] = strftime('%H:%M')
+
     
 class BatteryStatus(WorkerThread):
     '''Monitors battery status. Lots of files!'''
@@ -365,6 +344,7 @@ class BatteryStatus(WorkerThread):
         
         elif status == 'Unknown':
             self.show = False
+            
 
 class WirelessStatus(WorkerThread):
     '''Monitor if given interface is connected to the internet.'''
@@ -409,41 +389,28 @@ class Volume(WorkerThread):
         self.amixer = Mixer(control=self.channel, 
                             id=self.mixer_id,
                             cardindex=self.card_index)
-        self._data = []
-        for i, channel in enumerate(self.amixer.getvolume()):
-            self._data.append({'channel': i, 
-                               'level': 0, 
-                               'muted': False})
+        self.channels = 0
+        for channel in self.amixer.getvolume():
+            self.channels += 1
+            
     
     def _update_data(self):
         self.amixer = Mixer(control=self.channel, 
                             id=self.mixer_id,
                             cardindex=self.card_index)
-        self.color = ''
+        self._data['full_text'] = '♪: '
         try:
-            for i, channel in enumerate(zip(self.amixer.getmute(), 
-                                            self.amixer.getvolume())):
-                self._data[i]['level'] = channel[1]
-                if channel[0]:
-                    self._data[i]['muted'] = True
-                    self.color = self.color_critical
-                else:
-                    self._data[i]['muted'] = False
+            muted = self.amixer.getmute()
         except ALSAAudioError:
-            for i, volume in enumerate(self.amixer.getvolume()):
-                self._data[i]['level'] = volume
-            
-                    
-    def get_output(self):
-        output = []
-        for entry in self._data:
-            output.append({'full_text': '♪{}:{}%'.format(entry['channel'],
-                entry['level']),
-                'name': self.name})
-            if self.color:
-                output[len(output) -1]['color'] = self.color
-        return output
-                
+            muted = [False for i in range(0, self.channels)]
+        volume = self.amixer.getvolume()
+        for i in range(0, self.channels):
+            self._data['full_text'] += str(volume[i]) + '%'
+            if i < self.channels - 1:
+                self._data['full_text'] += ' '
+            if muted[i]:
+                self._data['color'] = self.color_critical
+
         
 class StatusBar():
     def __init__(self):
@@ -461,7 +428,7 @@ class StatusBar():
 	    "MPDCurrentSong": MPDCurrentSong, 
 	    "HDDTemp": HDDTemp, 
 	    "GPUTemp": GPUTemp, 
-	    "CPUTemp": CPUTemp, 
+	    "HwmonTemp": HwmonTemp, 
 	    "DiskUsage": DiskUsage, 
 	    "WirelessStatus": WirelessStatus, 
 	    "BatteryStatus": BatteryStatus, 
