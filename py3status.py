@@ -15,7 +15,7 @@
 #  MA 02110-1301, USA.
 #  
 
-import json
+from json import dumps
 from subprocess import Popen, PIPE
 from socket import socket
 from threading import Thread, Event
@@ -213,7 +213,7 @@ class CPUTemp(GetTemp):
     work.'''
     def __init__(self, temp_files, interval=2, name='CPU', **kwargs):
         super().__init__(interval=interval, name=name,**kwargs)
-        self.temp_files = json.loads(temp_files)
+        self.temp_files = temp_files.split()
         
     def _update_data(self):
         max_temp = 0
@@ -468,8 +468,8 @@ class StatusBar():
 	    "Volume": Volume, 
 	    "Date": Date
         }
-        order = json.loads(self.config['DEFAULT'].pop('order'))
-        
+        order = self.config['DEFAULT'].pop('order').split()
+
         for entry in order:
             self.threads.append(types[self.config[entry].pop('class_type')](
                                 **self.config[entry]))
@@ -495,7 +495,7 @@ class StatusBar():
                         else:
                             items.append(item)
                         
-                print(comma, json.dumps(items), flush=True, sep='')
+                print(comma, dumps(items), flush=True, sep='')
                 comma = ','
                 sleep(self.interval)
             except KeyboardInterrupt:
