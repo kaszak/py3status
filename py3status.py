@@ -63,7 +63,7 @@ class WorkerThread(Thread):
         pass
     
     def get_output(self):
-        '''Returns a dictionary redy to be sent to i3bar'''
+        '''Returns a dictionary ready to be sent to i3bar'''
         output = {'full_text': self._data['full_text'],
                   'name': self.name, 
                   'urgent': self.urgent
@@ -254,12 +254,12 @@ class DiskUsage(WorkerThread):
             if usage.percent > self.percentage:
                 self.show = True
                 self.urgent = True
-                self._data['full_text'] = '{}: {}%'.format(
+                self._data['full_text'] = '{}: {}% {}'.format(
                     self.mountpoint, 
                     usage.percent,
-                    human_size(usage.free))
+                    self.human_size(usage.free))
                 # Last directory in mount point instead of full path
-                self._data['short_text'] = '{}: {}%}'.format(
+                self._data['short_text'] = '{}: {}%'.format(
                     self.mountpoint.split('/')[-1], 
                     usage.percent)
                 self._data['color'] = self.color_warning
