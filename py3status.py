@@ -29,7 +29,7 @@ from alsaaudio import Mixer, ALSAAudioError
 
 class WorkerThread(Thread):
     '''Skeleton Class for all worker threads.'''
-    def __init__(self, name, class_type, order, interval=1, 
+    def __init__(self, name, interval=1, 
                  color_good="#597B20", 
                  color_warning="#DED838", 
                  color_critical="#C12121", 
@@ -45,12 +45,6 @@ class WorkerThread(Thread):
         self.color_warning = color_warning
         self.color_critical =  color_critical
         self.color = ''
-        
-        # Kludge, fix that!
-        self.class_type = class_type
-        self.order = order
-        del self.order
-        del self.class_type
         
         # Subclasses need to upadte this value in their's _update_data()
         # if they are going to use the default get_output()
@@ -474,9 +468,10 @@ class StatusBar():
 	    "Volume": Volume, 
 	    "Date": Date
         }
-        order = json.loads(self.config['DEFAULT']['order'])
+        order = json.loads(self.config['DEFAULT'].pop('order'))
+        
         for entry in order:
-            self.threads.append(types[self.config[entry]['class_type']](
+            self.threads.append(types[self.config[entry].pop('class_type')](
                                 **self.config[entry]))
         for thread in self.threads:
             thread.start()
