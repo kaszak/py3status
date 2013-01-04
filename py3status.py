@@ -366,8 +366,8 @@ class BatteryStatus(WorkerThread):
                 self.color = self.color_critical
             else:
                 self.urgent = False
-            self._data['full_text'] = '{} {}%'.format(status, percentage)
-            self._data['short_text'] = '{} {}%'.format(status_s, percentage)
+            self._data['full_text'] = '{} {:.0f}%'.format(status, percentage)
+            self._data['short_text'] = '{} {:.0f}%'.format(status_s, percentage)
         
         elif status == 'Unknown':
             self.show = False
@@ -392,7 +392,7 @@ class WirelessStatus(WorkerThread):
             self.urgent = True
         output = essid_command.stdout.read().decode().strip()
         
-        if output != '':
+        if output:
             self._data['full_text'] = output
             self._data['short_text'] = output
         else:
@@ -447,7 +447,7 @@ class Volume(WorkerThread):
                 entry['level']),
                 'name': self.name})
             if self.color:
-                output['color'] = self.color
+                output[len(output) -1]['color'] = self.color
         return output
                 
         
