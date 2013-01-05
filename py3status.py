@@ -43,14 +43,12 @@ class WorkerThread(Thread):
         self.name = name
         self.color_warning = color_warning
         self.color_critical =  color_critical
-        self.color = ''
         
-        # Subclasses need to upadte this value in their's _update_data()
-        # if they are going to use the default get_output()
-        self._data_orig = {'full_text': '',
-                           'short_text': '',
-                           'color': ''
-                           }
+        # Template for self._data, containing strings
+        self._data = {'full_text': '',
+                      'short_text': '',
+                      'color': ''
+                     }
 
     def stop(self):
         '''Breaks the run() loop.'''
@@ -79,7 +77,7 @@ class WorkerThread(Thread):
         '''Main worker loop.'''
         while not self.stopped.is_set():
             # Empties _data every run
-            self._data = self._data_orig.copy()
+            # self._data = self._data_orig.copy()
             self._update_data()
             sleep(self.interval)
 
@@ -97,9 +95,9 @@ class GetTemp(WorkerThread):
         value, display it and set urgency. Stop displaying when
         temperature drops below temp_warning threshold.'''
         if temp >= self.temp_critical:
-            self.show = True
             self._data['color'] = self.color_critical
             self.urgent = True
+            self.show = True
         elif self.temp_warning <= temp < self.temp_critical:
             self._data['color'] = self.color_warning
             self.urgent = False
@@ -119,7 +117,7 @@ class MPDCurrentSong(WorkerThread):
         self.host = host
         self.port = int(port)
         self.mpd_client = MPDClient()
-        #self._connect_to_mpd()
+        self._connect_to_mpd()
         
         
     def _connect_to_mpd(self):
@@ -253,7 +251,6 @@ class DiskUsage(WorkerThread):
             pass
         else:
             if usage.percent > self.percentage:
-                self.show = True
                 self.urgent = True
                 self._data['full_text'] = '{}: {}% {}'.format(
                     self.mountpoint, 
@@ -264,6 +261,7 @@ class DiskUsage(WorkerThread):
                     self.mountpoint.split('/')[-1], 
                     usage.percent)
                 self._data['color'] = self.color_warning
+                self.show = True
             else:
                 self.show = False
                 self.urgent = False
@@ -315,8 +313,6 @@ class BatteryStatus(WorkerThread):
             present = bat_p.read().strip()
         if present != '1':
             self.show = False
-            self.data['full_text'] = 'No Battery'
-            self.data['short_text'] = 'No BAT'
             return
             
         with open(self.battery_file_status) as bat_s:
@@ -327,7 +323,6 @@ class BatteryStatus(WorkerThread):
             
         elif (status =='Charging') or (status == 'Discharging'):
             status_s = status[0]
-            self.show = True
             with open(self.battery_file_full) as bat_f:
                 full = int(bat_f.read().strip())
         
@@ -337,11 +332,15 @@ class BatteryStatus(WorkerThread):
             percentage = charge * 100 / full
             if percentage < self.critical:
                 self.urgent = True
-                self.color = self.color_critical
+                self._data['color'] = self.color_critical
             else:
                 self.urgent = False
-            self._data['full_text'] = '{} {:.0f}%'.format(status, percentage)
-            self._data['short_text'] = '{} {:.0f}%'.format(status_s, percentage)
+                self._data['color'] = ''
+            self._data['full_text'] = '{} {:.0f}%'.format(status, 
+                percentage)
+            self._data['short_text'] = '{} {:.0f}%'.format(status_s, 
+                percentage)
+            self.show = True
         
         elif status == 'Unknown':
             self.show = False
@@ -369,9 +368,11 @@ class WirelessStatus(WorkerThread):
         if output:
             self._data['full_text'] = output
             self._data['short_text'] = output
+            self._data['color'] = ''
             self.urgent = False
         else:
-            self._data['full_text'] = '{} disconnected'.format(self.interface)
+            self._data['full_text'] = '{} disconnected'.format(
+                self.interface)
             self._data['short_text'] = '{} D/C'.format(self.interface)
             self._data['color'] = self.color_critical
             self.urgent = True
@@ -400,6 +401,7 @@ class Volume(WorkerThread):
                             id=self.mixer_id,
                             cardindex=self.card_index)
         self._data['full_text'] = '♪: '
+        self._data['color'] = ''
         try:
             muted = self.amixer.getmute()
         except ALSAAudioError:
@@ -421,9 +423,9 @@ class StatusBar():
     def _start_threads(self):
         config = ConfigParser()
         config.read([expanduser('~/.py3status.conf'),
-                          'py3status.conf', 
-                          '/etc/py3status.conf'
-                          ])
+                    'py3status.conf', 
+                    '/etc/py3status.conf'
+                    ])
         
         types = {
 	    "MPDCurrentSong": MPDCurrentSong, 
