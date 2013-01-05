@@ -23,7 +23,7 @@ from time import sleep, strftime
 from configparser import ConfigParser
 from os.path import expanduser
 
-from mpd import MPDClient
+from mpd import MPDClient, ConnectionError
 from psutil import disk_partitions, disk_usage
 from alsaaudio import Mixer, ALSAAudioError
 
@@ -65,13 +65,14 @@ class WorkerThread(Thread):
     def get_output(self):
         '''Returns a dictionary ready to be sent to i3bar'''
         output = {'full_text': self._data['full_text'],
-                  'name': self.name, 
-                  'urgent': self.urgent
+                  'name': self.name,
                   }
         if self._data['color']:
             output['color'] = self._data['color']
         if self._data['short_text']:
             output['short_text'] = self._data['short_text']
+        if self.urgent:
+            output['urgent'] = self.urgent
         return output
     
     def run(self):
@@ -118,13 +119,13 @@ class MPDCurrentSong(WorkerThread):
         self.host = host
         self.port = int(port)
         self.mpd_client = MPDClient()
-        self._connect_to_mpd()
+        #self._connect_to_mpd()
         
         
     def _connect_to_mpd(self):
         try:
             self.mpd_client.connect(self.host, self.port)
-        except ConnectionError:
+        except (ConnectionError, ConnectionRefusedError):
             pass
         
     def _update_data(self):
@@ -148,7 +149,7 @@ class MPDCurrentSong(WorkerThread):
                 self._data['full_text'] = mpd_artist + ' - ' + mpd_title
                 self._data['short_text'] = mpd_title
                 self.show = True
-        except ConnectionError:
+        except (ConnectionError, ConnectionRefusedError):
             self.show = False
             self._connect_to_mpd()
 
@@ -355,7 +356,6 @@ class WirelessStatus(WorkerThread):
         self.show = True
     
     def _update_data(self):
-        self.color = ''
         command = 'iwgetid --raw {}'.format(self.interface)
         essid_command = Popen(command.split(), stdout=PIPE)
         if essid_command.poll() == 255:
@@ -369,10 +369,11 @@ class WirelessStatus(WorkerThread):
         if output:
             self._data['full_text'] = output
             self._data['short_text'] = output
+            self.urgent = False
         else:
             self._data['full_text'] = '{} disconnected'.format(self.interface)
             self._data['short_text'] = '{} D/C'.format(self.interface)
-            self.color = self.color_critical
+            self._data['color'] = self.color_critical
             self.urgent = True
 
     
@@ -415,15 +416,15 @@ class Volume(WorkerThread):
 class StatusBar():
     def __init__(self):
         home = expanduser('~')
-        self.config = ConfigParser()
-        self.config.read([expanduser('~/.py3status.conf'),
-                          'py3status.conf', 
-                          '/etc/py3status.conf'
-                          ])
-        self.interval = int(self.config['DEFAULT']['interval'])
         self.threads = []
         
     def _start_threads(self):
+        config = ConfigParser()
+        config.read([expanduser('~/.py3status.conf'),
+                          'py3status.conf', 
+                          '/etc/py3status.conf'
+                          ])
+        
         types = {
 	    "MPDCurrentSong": MPDCurrentSong, 
 	    "HDDTemp": HDDTemp, 
@@ -435,11 +436,14 @@ class StatusBar():
 	    "Volume": Volume, 
 	    "Date": Date
         }
-        order = self.config['DEFAULT'].pop('order').split()
+        
+        self.interval = int(config['DEFAULT']['interval'])
+        
+        order = config['DEFAULT'].pop('order').split()
 
         for entry in order:
-            self.threads.append(types[self.config[entry].pop('class_type')](
-                                **self.config[entry]))
+            self.threads.append(types[config[entry].pop('class_type')](
+                                **config[entry]))
         for thread in self.threads:
             thread.start()
         
