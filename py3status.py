@@ -17,11 +17,14 @@
 
 from json import dumps
 from subprocess import Popen, PIPE
-from socket import socket
+from socket import socket, SOCK_DGRAM
 from threading import Thread, Event
 from time import sleep, strftime
 from configparser import ConfigParser
 from os.path import expanduser
+from array import array
+from struct import pack
+from fcntl import ioctl
 
 from mpd import MPDClient, ConnectionError
 from psutil import disk_partitions, disk_usage
@@ -44,7 +47,7 @@ class WorkerThread(Thread):
         self.color_warning = color_warning
         self.color_critical =  color_critical
         
-        # Template for self._data, containing strings
+        # Template for self._data, mangled by get_output()
         self._data = {'full_text': '',
                       'short_text': '',
                       'color': ''
@@ -76,8 +79,6 @@ class WorkerThread(Thread):
     def run(self):
         '''Main worker loop.'''
         while not self.stopped.is_set():
-            # Empties _data every run
-            # self._data = self._data_orig.copy()
             self._update_data()
             sleep(self.interval)
 
@@ -109,11 +110,10 @@ class GetTemp(WorkerThread):
         
 class MPDCurrentSong(WorkerThread):
     '''Grabs current sog from MPD. Shows data only if MPD is 
-    currently playing. If ConnectionError exception is encountered, 
+    currently playing. If exception is encountered, 
     try to reconnect until succesfull.'''
-    def __init__(self, host='localhost', port=6600, interval=1, 
-                 name='Currently Playing', **kwargs):
-        super().__init__(interval=interval,name=name, **kwargs)
+    def __init__(self, host='localhost', port=6600, **kwargs):
+        super().__init__(**kwargs)
         self.host = host
         self.port = int(port)
         self.mpd_client = MPDClient()
@@ -154,9 +154,8 @@ class MPDCurrentSong(WorkerThread):
     
 class HDDTemp(GetTemp):
     '''Monitors HDD temperature, depends on hddtemp daemon running.'''
-    def __init__(self, host='localhost', port=7634, 
-                 interval=60, name='HDD', **kwargs):
-        super().__init__(interval=interval, name=name, **kwargs)
+    def __init__(self, host='localhost', port=7634, **kwargs):
+        super().__init__(**kwargs)
         self.host = host
         self.port = int(port)
     
@@ -183,8 +182,8 @@ class HDDTemp(GetTemp):
 class GPUTemp(GetTemp):
     '''Monitors the temperature of GPU with properietary drivers 
     installed. Use HwmonTemp for open-source ones.''' 
-    def __init__(self, vendor, interval=2, name='GPU', **kwargs):
-        super().__init__(interval=interval, name=name, **kwargs)
+    def __init__(self, vendor, **kwargs):
+        super().__init__(**kwargs)
         if vendor == 'catalyst':
             self._update_data = self._update_data_catalyst
         elif vendor == 'nvidia':
@@ -210,8 +209,8 @@ class HwmonTemp(GetTemp):
     and displays the highest one. Altough this class is supposed to deal
     with CPU temperatures, any temperature file from hwmon driver should
     work.'''
-    def __init__(self, temp_files, interval=2, name='CPU', **kwargs):
-        super().__init__(interval=interval, name=name,**kwargs)
+    def __init__(self, temp_files, **kwargs):
+        super().__init__(**kwargs)
         self.temp_files = temp_files.split()
         
     def _update_data(self):
@@ -234,12 +233,8 @@ class DiskUsage(WorkerThread):
     '''Monitor disk usage using psutil interface. Shows data only when
     free space on one or more partitions is less than 
     (100 - self.percentage)%'''
-    def __init__(self, mountpoint,
-                 interval=30, 
-                 percentage=90, 
-                 name="Disk Usage", 
-                 **kwargs):
-        super().__init__(interval=interval, name=name,**kwargs)
+    def __init__(self, mountpoint, percentage=90, **kwargs):
+        super().__init__(**kwargs)
         self.percentage = float(percentage)
         self.mountpoint = mountpoint
         
@@ -282,8 +277,8 @@ class DiskUsage(WorkerThread):
             
 class Date(WorkerThread):
     '''Shows date and time, nothing to see here.'''
-    def __init__(self, interval=60, name='Date', **kwargs):
-        super().__init__(interval=interval, name=name,**kwargs)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.show=True
     
     def _update_data(self):
@@ -293,14 +288,14 @@ class Date(WorkerThread):
     
 class BatteryStatus(WorkerThread):
     '''Monitors battery status. Lots of files!'''
-    def __init__(self, interval=5, critical=5, name='Battery', 
+    def __init__(self, critical=5,
             battery_file_full='/sys/class/power_supply/BAT0/energy_full',
             battery_file_present='/sys/class/power_supply/BAT0/present',
             battery_file_charge='/sys/class/power_supply/BAT0/energy_now',
             battery_file_status='/sys/class/power_supply/BAT0/status', 
             **kwargs):
         
-        super().__init__(interval=interval, name=name,**kwargs)
+        super().__init__(**kwargs)
         self.critical = float(critical)
         self.battery_file_full = battery_file_full
         self.battery_file_present = battery_file_present
@@ -344,26 +339,47 @@ class BatteryStatus(WorkerThread):
         
         elif status == 'Unknown':
             self.show = False
-            
 
+            
 class WirelessStatus(WorkerThread):
     '''Monitor if given interface is connected to the internet.'''
-    def __init__(self, interface,
-            interval=2, name='Network', **kwargs):
-        super().__init__(interval=interval, name=name,**kwargs)
+    def __init__(self, interface, **kwargs):
+        super().__init__(**kwargs)
         self.interface = interface
+        self.length = 32 # Max ESSID length
+        self.fmt = 'PH' # Format for struct.pack(), P = void*, H=unsigned short
+        # First part of the ioctl call, 16-byte string containing name 
+        # of the interface.
+        self.magic_number = 0x8B1B # Wizardry
+        self.part_1 = bytes(self.interface.encode()) + b'\0' * (16-len(interface))
+        # Second part of the ioctl call, 32-byte empty string that will
+        # contain ESSID
+        self.part_2 = b'\x00' * self.length
+        # Socket to the kernel, seems like it doesn't need recreating
+        # every loop.
+        self.kernel_socket = socket(type=SOCK_DGRAM)
         self.show = True
     
     def _update_data(self):
-        command = 'iwgetid --raw {}'.format(self.interface)
-        essid_command = Popen(command.split(), stdout=PIPE)
-        if essid_command.poll() == 255:
+        # Build the call
+        iwrequest = array('B', self.part_1)
+        essid = array('B', self.part_2)
+        address = essid.buffer_info()[0]
+        packed = pack(self.fmt, address, self.length)
+        iwrequest.extend(packed)
+        
+        # Moment of truth
+        try:
+            ioctl(self.kernel_socket.fileno(), self.magic_number, iwrequest)
+        except OSError:
             self._data['full_text'] = '{}: {} is not wireless'.format(
                 self.name, self.interface)
             self._data['short_text'] = '{}!'.format(self.name)
             self.color = self.color_critical
             self.urgent = True
-        output = essid_command.stdout.read().decode().strip()
+            return
+            
+        output = essid.tostring().strip(b'\x00').decode()
         
         if output:
             self._data['full_text'] = output
@@ -381,9 +397,12 @@ class WirelessStatus(WorkerThread):
 class Volume(WorkerThread):
     '''Monitor volume of the given channel usilg alssaudio python 
     library.'''
-    def __init__(self, channel='Master', interval=1, 
-                 name='Volume', mixer_id=0, card_index=0, **kwargs):
-        super().__init__(interval=interval, name=name,**kwargs)
+    def __init__(self, 
+                 channel='Master',
+                 mixer_id=0, 
+                 card_index=0, 
+                 **kwargs):
+        super().__init__(**kwargs)
         self.channel = channel
         self.mixer_id = int(mixer_id)
         self.card_index = int(card_index)
@@ -391,11 +410,8 @@ class Volume(WorkerThread):
         self.amixer = Mixer(control=self.channel, 
                             id=self.mixer_id,
                             cardindex=self.card_index)
-        self.channels = 0
-        for channel in self.amixer.getvolume():
-            self.channels += 1
+        self.channels = len(self.amixer.getvolume())
             
-    
     def _update_data(self):
         self.amixer = Mixer(control=self.channel, 
                             id=self.mixer_id,
@@ -417,12 +433,12 @@ class Volume(WorkerThread):
         
 class StatusBar():
     def __init__(self):
-        home = expanduser('~')
         self.threads = []
         
     def _start_threads(self):
         config = ConfigParser()
         config.read([expanduser('~/.py3status.conf'),
+                     expanduser('~/py3status.conf'),
                     'py3status.conf', 
                     '/etc/py3status.conf'
                     ])
@@ -433,7 +449,7 @@ class StatusBar():
 	    "GPUTemp": GPUTemp, 
 	    "HwmonTemp": HwmonTemp, 
 	    "DiskUsage": DiskUsage, 
-	    "WirelessStatus": WirelessStatus, 
+	    "WirelessStatus": WirelessStatus,
 	    "BatteryStatus": BatteryStatus, 
 	    "Volume": Volume, 
 	    "Date": Date
