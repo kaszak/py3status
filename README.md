@@ -11,6 +11,7 @@ Put the conf file in your home, edit it for your tastes and you are
 set.
 
 Possible tripwires:
+
 **HDDTemp thread** - I don't know how hddtemp behaves in the presence of
 2 or more hard drives, feedback appreciated
 
