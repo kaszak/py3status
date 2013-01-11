@@ -38,8 +38,7 @@ class WorkerThread(Thread):
                  color_critical="#C12121", 
                  **kwargs):
         super().__init__(**kwargs)
-        self.stopped = Event()
-        self.paused = Event()
+        self.daemon = True
         self.show = False
         self.urgent = False
         self.interval = int(interval)
@@ -52,10 +51,6 @@ class WorkerThread(Thread):
                       'short_text': '',
                       'color': ''
                      }
-
-    def stop(self):
-        '''Breaks the run() loop.'''
-        self.stopped.set()
     
     def _update_data(self):
         '''This function has to manipulate self._data variable that 
@@ -78,7 +73,7 @@ class WorkerThread(Thread):
     
     def run(self):
         '''Main worker loop.'''
-        while not self.stopped.is_set():
+        while True:
             self._update_data()
             sleep(self.interval)
 
@@ -348,9 +343,9 @@ class WirelessStatus(WorkerThread):
         self.interface = interface
         self.length = 32 # Max ESSID length
         self.fmt = 'PH' # Format for struct.pack(), P = void*, H=unsigned short
+        self.magic_number = 0x8B1B # Wizardry
         # First part of the ioctl call, 16-byte string containing name 
         # of the interface.
-        self.magic_number = 0x8B1B # Wizardry
         self.part_1 = bytes(self.interface.encode()) + b'\0' * (16-len(interface))
         # Second part of the ioctl call, 32-byte empty string that will
         # contain ESSID
@@ -364,7 +359,7 @@ class WirelessStatus(WorkerThread):
         # Build the call
         iwrequest = array('B', self.part_1)
         essid = array('B', self.part_2)
-        address = essid.buffer_info()[0]
+        address = essid.buffer_info()[0] # (address, self.length)
         packed = pack(self.fmt, address, self.length)
         iwrequest.extend(packed)
         
@@ -474,23 +469,10 @@ class StatusBar():
         self._start_threads()
         
         while True:
-            try:
-                items = []
-                for thread in self.threads:
-                    if thread.show:
-                        item = thread.get_output()
-                        if isinstance(item, list):
-                            items.extend(item)
-                        else:
-                            items.append(item)
-                        
-                print(comma, dumps(items), flush=True, sep='')
-                comma = ','
-                sleep(self.interval)
-            except KeyboardInterrupt:
-                for thread in self.threads:
-                    thread.stop()
-                raise
+            items = [thread.get_output() for thread in self.threads if thread.show]
+            print(comma, dumps(items), flush=True, sep='')
+            comma = ','
+            sleep(self.interval)
                 
 if __name__ == '__main__':
     statusbar = StatusBar()
