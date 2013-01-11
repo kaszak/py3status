@@ -18,7 +18,7 @@
 from json import dumps
 from subprocess import Popen, PIPE
 from socket import socket, SOCK_DGRAM
-from threading import Thread, Event
+from threading import Thread
 from time import sleep, strftime
 from configparser import ConfigParser
 from os.path import expanduser
@@ -38,7 +38,7 @@ class WorkerThread(Thread):
                  color_critical="#C12121", 
                  **kwargs):
         super().__init__(**kwargs)
-        self.daemon = True
+        self.daemon = True # kill threads when StatusBar exits
         self.show = False
         self.urgent = False
         self.interval = int(interval)
@@ -411,7 +411,7 @@ class Volume(WorkerThread):
         self.amixer = Mixer(control=self.channel, 
                             id=self.mixer_id,
                             cardindex=self.card_index)
-        self._data['full_text'] = '♪: '
+        self._data['full_text'] = '♪:'
         self._data['color'] = ''
         try:
             muted = self.amixer.getmute()
@@ -419,7 +419,7 @@ class Volume(WorkerThread):
             muted = [False for i in range(0, self.channels)]
         volume = self.amixer.getvolume()
         for i in range(0, self.channels):
-            self._data['full_text'] += str(volume[i]) + '%'
+            self._data['full_text'] += '{:3d}%'.format(volume[i])
             if i < self.channels - 1:
                 self._data['full_text'] += ' '
             if muted[i]:
