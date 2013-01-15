@@ -475,7 +475,7 @@ class StatusBar():
         order = config['DEFAULT'].pop('order').split()
 
         for entry in order:
-            self.threads.append(eval(config[entry].pop('class_type'))(
+            self.threads.append(globals()[config[entry].pop('class_type')](
                                 **config[entry]))
         for thread in self.threads:
             thread.start()
