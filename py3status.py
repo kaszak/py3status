@@ -470,25 +470,12 @@ class StatusBar():
                     '/etc/py3status.conf'
                     ])
         
-        types = {
-	    "MPDCurrentSong": MPDCurrentSong, 
-	    "HDDTemp": HDDTemp, 
-	    "GPUTemp": GPUTemp, 
-	    "HwmonTemp": HwmonTemp, 
-	    "DiskUsage": DiskUsage, 
-	    "WirelessStatus": WirelessStatus,
-	    "BatteryStatus": BatteryStatus, 
-	    "Volume": Volume, 
-	    "Date": Date,
-        "XInfo": XInfo
-        }
-        
         self.interval = int(config['DEFAULT']['interval'])
         
         order = config['DEFAULT'].pop('order').split()
 
         for entry in order:
-            self.threads.append(types[config[entry].pop('class_type')](
+            self.threads.append(eval(config[entry].pop('class_type'))(
                                 **config[entry]))
         for thread in self.threads:
             thread.start()
