@@ -25,6 +25,7 @@ from os.path import expanduser
 from array import array
 from struct import pack
 from fcntl import ioctl
+import re
 
 from mpd import MPDClient, ConnectionError
 from psutil import disk_partitions, disk_usage
@@ -180,20 +181,20 @@ class GPUTemp(GetTemp):
     def __init__(self, vendor, **kwargs):
         super().__init__(**kwargs)
         if vendor == 'catalyst':
+            self.command = 'aticonfig --odgt'.split()
             self._update_data = self._update_data_catalyst
         elif vendor == 'nvidia':
+            self.command = 'nvidia-settings -q gpucoretemp -t'.split()
             self._update_data = self._update_data_nvidia
         
     def _update_data_catalyst(self):
-        command = 'aticonfig --odgt'
-        catalyst = Popen(command.split(), stdout=PIPE)
+        catalyst = Popen(self.command, stdout=PIPE)
         output = catalyst.stdout.read()
         temp = float(output.splitlines()[2].split()[4]) #shudder
         self._check_temp(temp)
         
     def _update_data_nvidia(self):
-        command = 'nvidia-settings -q gpucoretemp -t'
-        nvidia = Popen(command.split(), stdout=PIPE)
+        nvidia = Popen(self.command, stdout=PIPE)
         output = nvidia.stdout.read()
         temp = float(output)
         self._check_temp(temp)
@@ -426,6 +427,37 @@ class Volume(WorkerThread):
                 self._data['color'] = self.color_critical
 
         
+class XInfo(WorkerThread):
+    '''I need to come up with a better solution, but this will do for now.
+    Shows if *Lock keys are on, and if DPMS of the monitor is off.'''
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.command = 'xset q'.split()
+        self.lock_keys_re = re.compile(r'(Caps Lock|Num Lock|Scroll Lock):\s*(off|on)')
+        self.dpms_re = re.compile(r'DPMS is (?P<state>Enabled|Disabled)')
+        self._data['color'] = self.color_warning
+        
+    def _update_data(self):
+        xset = Popen(self.command, stdout = PIPE)
+        output = xset.stdout.read().decode()
+        self._data['full_text'] = ''
+        
+        for match in self.lock_keys_re.finditer(output):
+            key, state = match.groups()
+            if state == 'on':
+                self._data['full_text'] += key + ' '
+        
+        dpms_state = self.dpms_re.search(output).group('state')
+        if dpms_state == 'Disabled':
+            self._data['full_text'] += 'DPMS'
+        
+        if self._data['full_text']:
+            self._data['full_text'] = self._data['full_text'].strip()
+            self.show = True
+        else:
+            self.show = False
+        
+
 class StatusBar():
     def __init__(self):
         self.threads = []
@@ -447,7 +479,8 @@ class StatusBar():
 	    "WirelessStatus": WirelessStatus,
 	    "BatteryStatus": BatteryStatus, 
 	    "Volume": Volume, 
-	    "Date": Date
+	    "Date": Date,
+        "XInfo": XInfo
         }
         
         self.interval = int(config['DEFAULT']['interval'])
