@@ -34,9 +34,13 @@ from alsaaudio import Mixer, ALSAAudioError
 
 class WorkerThread(Thread):
     '''Skeleton Class for all worker threads.'''
-    def __init__(self, name, idn, queue, interval=1,
-                 color_warning="#DED838", 
-                 color_critical="#C12121", 
+    def __init__(self, 
+                 name, 
+                 idn, 
+                 queue, 
+                 interval,
+                 color_warning, 
+                 color_critical, 
                  **kwargs):
         super().__init__(**kwargs)
         self.daemon = True # kill threads when StatusBar exits
@@ -78,7 +82,10 @@ class WorkerThread(Thread):
         '''Main worker loop.'''
         while True:
             self._update_data()
-            self.queue.put((self.idn, self.show, self.get_output()))
+            if self.show:
+                self.queue.put((self.idn, self.get_output()))
+            else:
+                self.queue.put((self.idn, None))
             sleep(self.interval)
 
 
@@ -478,8 +485,6 @@ class StatusBar():
                     '/etc/py3status.conf'
                     ])
         
-        self.interval = int(config['DEFAULT']['interval'])
-        
         order = config['DEFAULT'].pop('order').split()
 
         for i, entry in enumerate(order):
@@ -491,13 +496,9 @@ class StatusBar():
     
     def _handle_updates(self):
         while self.updates:
-            idn, show, entry = self.updates.get()
+            idn, entry = self.updates.get()
             self.updates.task_done()
-            
-            if show:
-                self.data[idn] = entry
-            else:
-                self.data[idn] = None
+            self.data[idn] = entry
             
             if self.data != self.data_prev:
                 self._print_data()
