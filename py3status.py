@@ -32,11 +32,9 @@ from mpd import MPDClient, ConnectionError
 from psutil import disk_partitions, disk_usage
 from alsaaudio import Mixer, ALSAAudioError
 
-updates = Queue()
-
 class WorkerThread(Thread):
     '''Skeleton Class for all worker threads.'''
-    def __init__(self, name, idn, interval=1,
+    def __init__(self, name, idn, queue, interval=1,
                  color_warning="#DED838", 
                  color_critical="#C12121", 
                  **kwargs):
@@ -49,6 +47,7 @@ class WorkerThread(Thread):
         self.idn = idn #Identification number, sort of
         self.color_warning = color_warning
         self.color_critical =  color_critical
+        self.queue = queue
         
         # Template for self._data, mangled by get_output()
         self._data = {'full_text': '',
@@ -79,7 +78,7 @@ class WorkerThread(Thread):
         '''Main worker loop.'''
         while True:
             self._update_data()
-            updates.put((self.idn, self.show, self.get_output()))
+            self.queue.put((self.idn, self.show, self.get_output()))
             sleep(self.interval)
 
 
@@ -468,6 +467,7 @@ class StatusBar():
         self.data = []
         self.data_prev = []
         self.comma = ''
+        self.updates = Queue()
         
         
     def _start_threads(self):
@@ -484,14 +484,15 @@ class StatusBar():
 
         for i, entry in enumerate(order):
             self.threads.append(globals()[config[entry].pop('class_type')](
-                                idn=i, **config[entry]))
+                                idn=i, queue=self.updates, **config[entry]))
             self.data.append(None)
         for thread in self.threads:
             thread.start()
     
     def _handle_updates(self):
-        while updates:
-            idn, show, entry = updates.get()
+        while self.updates:
+            idn, show, entry = self.updates.get()
+            self.updates.task_done()
             
             if show:
                 self.data[idn] = entry
