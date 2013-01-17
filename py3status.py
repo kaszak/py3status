@@ -19,6 +19,7 @@ from json import dumps
 from subprocess import Popen, PIPE
 from socket import socket, SOCK_DGRAM
 from threading import Thread
+from queue import Queue
 from time import sleep, strftime
 from configparser import ConfigParser
 from os.path import expanduser
@@ -31,10 +32,11 @@ from mpd import MPDClient, ConnectionError
 from psutil import disk_partitions, disk_usage
 from alsaaudio import Mixer, ALSAAudioError
 
+updates = Queue()
 
 class WorkerThread(Thread):
     '''Skeleton Class for all worker threads.'''
-    def __init__(self, name, interval=1, 
+    def __init__(self, name, idn, interval=1,
                  color_warning="#DED838", 
                  color_critical="#C12121", 
                  **kwargs):
@@ -44,6 +46,7 @@ class WorkerThread(Thread):
         self.urgent = False
         self.interval = int(interval)
         self.name = name
+        self.idn = idn #Identification number, sort of
         self.color_warning = color_warning
         self.color_critical =  color_critical
         
@@ -76,6 +79,7 @@ class WorkerThread(Thread):
         '''Main worker loop.'''
         while True:
             self._update_data()
+            updates.put((self.idn, self.show, self.get_output()))
             sleep(self.interval)
 
 
@@ -461,6 +465,10 @@ class XInfo(WorkerThread):
 class StatusBar():
     def __init__(self):
         self.threads = []
+        self.data = []
+        self.data_prev = []
+        self.comma = ''
+        
         
     def _start_threads(self):
         config = ConfigParser()
@@ -474,25 +482,38 @@ class StatusBar():
         
         order = config['DEFAULT'].pop('order').split()
 
-        for entry in order:
+        for i, entry in enumerate(order):
             self.threads.append(globals()[config[entry].pop('class_type')](
-                                **config[entry]))
+                                idn=i, **config[entry]))
+            self.data.append(None)
         for thread in self.threads:
             thread.start()
+    
+    def _handle_updates(self):
+        while updates:
+            idn, show, entry = updates.get()
+            
+            if show:
+                self.data[idn] = entry
+            else:
+                self.data[idn] = None
+            
+            if self.data != self.data_prev:
+                self._print_data()
+                self.data_prev = self.data.copy()
+            
+            
+    def _print_data(self):
+        items = [item for item in self.data if item]
+        print(self.comma, dumps(items), flush=True, sep='')
+        self.comma = ','
         
     def run(self):
-        comma = ''
-
         print('{"version":1}', flush=True)
         print('[', flush=True)
         
         self._start_threads()
-        
-        while True:
-            items = [thread.get_output() for thread in self.threads if thread.show]
-            print(comma, dumps(items), flush=True, sep='')
-            comma = ','
-            sleep(self.interval)
+        self._handle_updates()
                 
 if __name__ == '__main__':
     statusbar = StatusBar()
