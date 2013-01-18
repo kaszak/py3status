@@ -190,22 +190,19 @@ class GPUTemp(GetTemp):
     installed. Use HwmonTemp for open-source ones.''' 
     def __init__(self, vendor, **kwargs):
         super().__init__(**kwargs)
-        self.vendor = vendor
-        self.command = ''
-        self.extractor = ''
+        if vendor == 'catalyst':
+            self.command = 'aticonfig --odgt'.split()
+            self.extractor = lambda output: float(output.splitlines()[2].split()[4])
+        elif vendor == 'nvidia':
+            self.command = 'nvidia-settings -q gpucoretemp -t'.split()
+            self.extractor = lambda output: float(output)
+        else:
+            raise ValueError(self.name + ': Unsupported vendor string.')
       
     def decorate(updater):
         def wrapper(self):
-            if not self.command or not self.extractor:
-                if self.vendor == 'catalyst':
-                    self.command = 'aticonfig --odgt'.split()
-                    self.extractor = 'float(output.splitlines()[2].split()[4])'
-                elif self.vendor == 'nvidia':
-                    self.command = 'nvidia-settings -q gpucoretemp -t'.split()
-                    self.extractor = 'float(output)'
-            
             output = updater(self, self.command)
-            temp = eval(self.extractor)
+            temp = self.extractor(output)
             self._check_temp(temp)
         
         return wrapper
