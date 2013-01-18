@@ -190,25 +190,30 @@ class GPUTemp(GetTemp):
     installed. Use HwmonTemp for open-source ones.''' 
     def __init__(self, vendor, **kwargs):
         super().__init__(**kwargs)
-        if vendor == 'catalyst':
-            self.command = 'aticonfig --odgt'.split()
-            self._update_data = self._update_data_catalyst
-        elif vendor == 'nvidia':
-            self.command = 'nvidia-settings -q gpucoretemp -t'.split()
-            self._update_data = self._update_data_nvidia
+        self.vendor = vendor
+        self.command = ''
+        self.extractor = ''
+      
+    def decorate(updater):
+        def wrapper(self):
+            if not self.command or not self.extractor:
+                if self.vendor == 'catalyst':
+                    self.command = 'aticonfig --odgt'.split()
+                    self.extractor = 'float(output.splitlines()[2].split()[4])'
+                elif self.vendor == 'nvidia':
+                    self.command = 'nvidia-settings -q gpucoretemp -t'.split()
+                    self.extractor = 'float(output)'
+            
+            output = updater(self, self.command)
+            temp = eval(self.extractor)
+            self._check_temp(temp)
         
-    def _update_data_catalyst(self):
-        catalyst = Popen(self.command, stdout=PIPE)
-        output = catalyst.stdout.read()
-        temp = float(output.splitlines()[2].split()[4]) #shudder
-        self._check_temp(temp)
-        
-    def _update_data_nvidia(self):
-        nvidia = Popen(self.command, stdout=PIPE)
-        output = nvidia.stdout.read()
-        temp = float(output)
-        self._check_temp(temp)
-
+        return wrapper
+    
+    @decorate
+    def _update_data(self, command):
+        tool = Popen(command, stdout=PIPE)
+        return tool.stdout.read()
 
 class HwmonTemp(GetTemp):
     '''Reads temperature from every file specified in temp_files list
