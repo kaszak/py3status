@@ -63,7 +63,7 @@ class WorkerThread(Thread):
         '''This function has to manipulate self._data variable that 
         should store internal readings ready to be dumped by 
         get_output()'''
-        pass
+        raise NotImplementedError()
     
     def get_output(self):
         '''Returns a dictionary ready to be sent to i3bar'''
@@ -118,7 +118,7 @@ class MPDCurrentSong(WorkerThread):
     '''Grabs current sog from MPD. Shows data only if MPD is 
     currently playing. If exception is encountered, 
     try to reconnect until succesfull.'''
-    def __init__(self, host='localhost', port=6600, **kwargs):
+    def __init__(self, host, port, **kwargs):
         super().__init__(**kwargs)
         self.host = host
         self.port = int(port)
@@ -160,7 +160,7 @@ class MPDCurrentSong(WorkerThread):
     
 class HDDTemp(GetTemp):
     '''Monitors HDD temperature, depends on hddtemp daemon running.'''
-    def __init__(self, host='localhost', port=7634, **kwargs):
+    def __init__(self, host, port, **kwargs):
         super().__init__(**kwargs)
         self.host = host
         self.port = int(port)
@@ -241,7 +241,7 @@ class DiskUsage(WorkerThread):
     '''Monitor disk usage using psutil interface. Shows data only when
     free space on one or more partitions is less than 
     (100 - self.percentage)%'''
-    def __init__(self, mountpoint, percentage=90, **kwargs):
+    def __init__(self, mountpoint, percentage, **kwargs):
         super().__init__(**kwargs)
         self.percentage = float(percentage)
         self.mountpoint = mountpoint
@@ -296,11 +296,12 @@ class Date(WorkerThread):
     
 class BatteryStatus(WorkerThread):
     '''Monitors battery status. Lots of files!'''
-    def __init__(self, critical=5,
-            battery_file_full='/sys/class/power_supply/BAT0/energy_full',
-            battery_file_present='/sys/class/power_supply/BAT0/present',
-            battery_file_charge='/sys/class/power_supply/BAT0/energy_now',
-            battery_file_status='/sys/class/power_supply/BAT0/status', 
+    def __init__(self,
+            critical,
+            battery_file_full,
+            battery_file_present,
+            battery_file_charge,
+            battery_file_status, 
             **kwargs):
         
         super().__init__(**kwargs)
@@ -373,19 +374,10 @@ class WirelessStatus(WorkerThread):
         iwrequest = array('B', self.part_1)
         essid = array('B', self.part_2)
         address = essid.buffer_info()[0] # (address, self.length)
-        packed = pack(self.fmt, address, self.length)
-        iwrequest.extend(packed)
+        iwrequest.extend(pack(self.fmt, address, self.length))
         
         # Moment of truth
-        try:
-            ioctl(self.kernel_socket.fileno(), self.magic_number, iwrequest)
-        except OSError:
-            self._data['full_text'] = '{}: {} is not wireless'.format(
-                self.name, self.interface)
-            self._data['short_text'] = '{}!'.format(self.name)
-            self.color = self.color_critical
-            self.urgent = True
-            return
+        ioctl(self.kernel_socket.fileno(), self.magic_number, iwrequest)
             
         output = essid.tostring().strip(b'\x00').decode()
         
@@ -406,9 +398,9 @@ class Volume(WorkerThread):
     '''Monitor volume of the given channel usilg alssaudio python 
     library.'''
     def __init__(self, 
-                 channel='Master',
-                 mixer_id=0, 
-                 card_index=0, 
+                 channel,
+                 mixer_id, 
+                 card_index, 
                  **kwargs):
         super().__init__(**kwargs)
         self.channel = channel
@@ -509,8 +501,9 @@ class StatusBar():
             
     def _print_data(self):
         items = [item for item in self.data if item]
-        print(self.comma, dumps(items), flush=True, sep='')
-        self.comma = ','
+        if items:
+            print(self.comma, dumps(items), flush=True, sep='')
+            self.comma = ','
         
     def run(self):
         print('{"version":1}', flush=True)
