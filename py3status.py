@@ -46,6 +46,7 @@ class WorkerThread(Thread):
         self.daemon = True # kill threads when StatusBar exits
         self.show = False
         self.urgent = False
+        self.blanked = True # was the output empty previously?
         self.interval = int(interval)
         self.name = name
         self.idn = idn #Identification number, sort of
@@ -58,7 +59,8 @@ class WorkerThread(Thread):
                       'short_text': '',
                       'color': ''
                      }
-    
+        self._data_prev = self._data.copy()
+        
     def _update_data(self):
         '''This function has to manipulate self._data variable that 
         should store internal readings ready to be dumped by 
@@ -82,10 +84,13 @@ class WorkerThread(Thread):
         '''Main worker loop.'''
         while True:
             self._update_data()
-            if self.show:
+            if self.show and (True if self.blanked else (self._data != self._data_prev)):
                 self.queue.put((self.idn, self.get_output()))
-            else:
+                self._data_prev = self._data.copy()
+                self.blanked = False
+            elif not self.show if not self.blanked else False:
                 self.queue.put((self.idn, None))
+                self.blanked = True
             sleep(self.interval)
 
 
@@ -198,20 +203,13 @@ class GPUTemp(GetTemp):
             self.extractor = lambda output: float(output)
         else:
             raise ValueError(self.name + ': Unsupported vendor string.')
-      
-    def decorate(updater):
-        def wrapper(self):
-            output = updater(self, self.command)
-            temp = self.extractor(output)
-            self._check_temp(temp)
-        
-        return wrapper
     
-    @decorate
-    def _update_data(self, command):
-        tool = Popen(command, stdout=PIPE)
-        return tool.stdout.read()
-
+    def _update_data(self):
+        tool = Popen(self.command, stdout=PIPE)
+        output = tool.stdout.read()
+        temp = self.extractor(output)
+        self._check_temp(temp)
+        
 class HwmonTemp(GetTemp):
     '''Reads temperature from every file specified in temp_files list
     and displays the highest one. Altough this class is supposed to deal
@@ -374,7 +372,7 @@ class WirelessStatus(WorkerThread):
         iwrequest = array('B', self.part_1)
         essid = array('B', self.part_2)
         address = essid.buffer_info()[0] # (address, self.length)
-        iwrequest.extend(pack(self.fmt, address, self.length))
+        iwrequest.extend(pack(self.fmt, address, self.length)) # flag is omitted
         
         # Moment of truth
         ioctl(self.kernel_socket.fileno(), self.magic_number, iwrequest)
@@ -466,7 +464,6 @@ class StatusBar():
     def __init__(self):
         self.threads = []
         self.data = []
-        self.data_prev = []
         self.comma = ''
         self.updates = Queue()
         
@@ -494,10 +491,7 @@ class StatusBar():
             self.updates.task_done()
             self.data[idn] = entry
             
-            if self.data != self.data_prev:
-                self._print_data()
-                self.data_prev = self.data.copy()
-            
+            self._print_data()
             
     def _print_data(self):
         items = [item for item in self.data if item]
