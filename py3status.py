@@ -17,7 +17,7 @@
 
 from json import dumps
 from subprocess import Popen, PIPE
-from socket import socket, SOCK_DGRAM, SO_REUSEADDR, SOL_SOCKET
+from socket import socket, SOCK_DGRAM
 from threading import Thread
 from queue import Queue
 from time import sleep, strftime
@@ -27,6 +27,7 @@ from array import array
 from struct import pack
 from fcntl import ioctl
 import re
+import os
 
 from mpd import MPDClient, ConnectionError
 from psutil import disk_partitions, disk_usage
@@ -490,37 +491,32 @@ class XInfo(WorkerThread):
             self.show = True
         else:
             self.show = False
-        
+            
         
 class DPMS(WorkerThread):
     '''
     Recieves messages from external script, that turns DPMS on/off.
+    We can assume that DPMS is always on initially.
     Script: https://github.com/kaszak/dots/blob/master/bin/dpms_on_off.py
     ''' 
-    def __init__(self, host, port, **kwargs):
+    def __init__(self, fifoname, **kwargs):
         WorkerThread.__init__(self, **kwargs)
-        self.host = host
-        self.port = int(port)
-        # Override default interval, socket.accept() will serve as a timer/blocker
+        self.fifoname = fifoname
+        # Override default interval, fifo will serve as a timer/blocker
         self.interval = 0 
-        self.listener = socket()
-        # Allow unobstructed statusbar restarting by allowing to reuse socket
-        self.listener.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-        self.listener.bind((self.host, self.port))
-        with open('/tmp/.statusbar.port', 'w') as port_file:
-            port_file.write(str(self.port))
-        self.listener.listen(1)
+        try:
+            os.mkfifo(self.fifoname)
+        except OSError:
+            os.remove(self.fifoname)
+            os.mkfifo(self.fifoname)
         self._data['color'] = self.color_warning
         self._data['full_text'] = 'DPMS'
         
     def _update_data(self):
-        connection, address = self.listener.accept()
-        if address[0] != '127.0.0.1': # refuse remote connections
-            connection.close()
-            return
+        with open(self.fifoname) as fifo:
+            message = fifo.read()
             
-        message = connection.recv(4096)
-        if message == b'OFF':
+        if message == 'OFF':
             self.show = True
         else:
             self.show = False
