@@ -39,10 +39,10 @@ class WorkerThread(Thread):
                  idn, 
                  queue, 
                  interval,
+                 color_critical,
                  color_warning, 
-                 color_critical, 
                  **kwargs):
-        super().__init__(**kwargs)
+        Thread.__init__(self, **kwargs)
         self.daemon = True # kill threads when StatusBar exits
         self.show = False
         self.urgent = False
@@ -59,7 +59,10 @@ class WorkerThread(Thread):
                       'short_text': '',
                       'color': ''
                      }
+        
+        # prevoius value of _data, for comparision
         self._data_prev = self._data.copy()
+        
         
     def _update_data(self):
         '''This function has to manipulate self._data variable that 
@@ -98,7 +101,7 @@ class GetTemp(WorkerThread):
     '''Skeleton Class for worker threads monitoring temperature of
     various pc components.'''
     def __init__(self, temp_warning, temp_critical, **kwargs):
-        super().__init__(**kwargs)
+        WorkerThread.__init__(self, **kwargs)
         self.temp_warning = float(temp_warning)
         self.temp_critical = float(temp_critical)
         
@@ -124,7 +127,7 @@ class MPDCurrentSong(WorkerThread):
     currently playing. If exception is encountered, 
     try to reconnect until succesfull.'''
     def __init__(self, host, port, **kwargs):
-        super().__init__(**kwargs)
+        WorkerThread.__init__(self, **kwargs)
         self.host = host
         self.port = int(port)
         self.mpd_client = MPDClient()
@@ -166,7 +169,7 @@ class MPDCurrentSong(WorkerThread):
 class HDDTemp(GetTemp):
     '''Monitors HDD temperature, depends on hddtemp daemon running.'''
     def __init__(self, host, port, **kwargs):
-        super().__init__(**kwargs)
+        GetTemp.__init__(self, **kwargs)
         self.host = host
         self.port = int(port)
     
@@ -194,7 +197,7 @@ class GPUTemp(GetTemp):
     '''Monitors the temperature of GPU with properietary drivers 
     installed. Use HwmonTemp for open-source ones.''' 
     def __init__(self, vendor, **kwargs):
-        super().__init__(**kwargs)
+        GetTemp.__init__(self, **kwargs)
         if vendor == 'catalyst':
             self.command = 'aticonfig --odgt'.split()
             self.extractor = lambda output: float(output.splitlines()[2].split()[4])
@@ -216,7 +219,7 @@ class HwmonTemp(GetTemp):
     with CPU temperatures, any temperature file from hwmon driver should
     work.'''
     def __init__(self, temp_files, **kwargs):
-        super().__init__(**kwargs)
+        GetTemp.__init__(self, **kwargs)
         self.temp_files = temp_files.split()
         
     def _update_data(self):
@@ -240,7 +243,7 @@ class DiskUsage(WorkerThread):
     free space on one or more partitions is less than 
     (100 - self.percentage)%'''
     def __init__(self, mountpoint, percentage, **kwargs):
-        super().__init__(**kwargs)
+        WorkerThread.__init__(self, **kwargs)
         self.percentage = float(percentage)
         self.mountpoint = mountpoint
         
@@ -284,7 +287,7 @@ class DiskUsage(WorkerThread):
 class Date(WorkerThread):
     '''Shows date and time, nothing to see here.'''
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        WorkerThread.__init__(self, **kwargs)
         self.show=True
     
     def _update_data(self):
@@ -302,7 +305,7 @@ class BatteryStatus(WorkerThread):
             battery_file_status, 
             **kwargs):
         
-        super().__init__(**kwargs)
+        WorkerThread.__init__(self, **kwargs)
         self.critical = float(critical)
         self.battery_file_full = battery_file_full
         self.battery_file_present = battery_file_present
@@ -351,7 +354,7 @@ class BatteryStatus(WorkerThread):
 class WirelessStatus(WorkerThread):
     '''Monitor if given interface is connected to the internet.'''
     def __init__(self, interface, **kwargs):
-        super().__init__(**kwargs)
+        WorkerThread.__init__(self, **kwargs)
         self.interface = interface
         self.length = 32 # Max ESSID length
         self.fmt = 'PH' # Format for struct.pack(), P = void*, H=unsigned short
@@ -400,7 +403,7 @@ class Volume(WorkerThread):
                  mixer_id, 
                  card_index, 
                  **kwargs):
-        super().__init__(**kwargs)
+        WorkerThread.__init__(self, **kwargs)
         self.channel = channel
         self.mixer_id = int(mixer_id)
         self.card_index = int(card_index)
@@ -415,7 +418,6 @@ class Volume(WorkerThread):
                             id=self.mixer_id,
                             cardindex=self.card_index)
         self._data['full_text'] = '♪:'
-        self._data['color'] = ''
         try:
             muted = self.amixer.getmute()
         except ALSAAudioError:
@@ -427,13 +429,15 @@ class Volume(WorkerThread):
                 self._data['full_text'] += ' '
             if muted[i]:
                 self._data['color'] = self.color_critical
+            else:
+                self._data['color'] = ''
 
         
 class XInfo(WorkerThread):
     '''I need to come up with a better solution, but this will do for now.
     Shows if *Lock keys are on, and if DPMS of the monitor is off.'''
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        WorkerThread.__init__(self, **kwargs)
         self.command = 'xset q'.split()
         self.lock_keys_re = re.compile(r'(Caps Lock|Num Lock|Scroll Lock):\s*(off|on)')
         self.dpms_re = re.compile(r'DPMS is (?P<state>Enabled|Disabled)')

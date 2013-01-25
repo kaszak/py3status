@@ -6,6 +6,7 @@ Statusline generator for i3bar
 * **python-alsaaaudio** for Python3
 * **python-mpd2**
 * **hddtemp** running as daemon
+* **xorg-xset**
 
 Put the conf file in your home, edit it for your tastes and you are
 set.
