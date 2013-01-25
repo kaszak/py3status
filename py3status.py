@@ -17,7 +17,7 @@
 
 from json import dumps
 from subprocess import Popen, PIPE
-from socket import socket, SOCK_DGRAM
+from socket import socket, SOCK_DGRAM, SO_REUSEADDR, SOL_SOCKET
 from threading import Thread
 from queue import Queue
 from time import sleep, strftime
@@ -33,7 +33,9 @@ from psutil import disk_partitions, disk_usage
 from alsaaudio import Mixer, ALSAAudioError
 
 class WorkerThread(Thread):
-    '''Skeleton Class for all worker threads.'''
+    '''
+    Skeleton Class for all worker threads.
+    '''
     def __init__(self, 
                  name, 
                  idn, 
@@ -65,13 +67,17 @@ class WorkerThread(Thread):
         
         
     def _update_data(self):
-        '''This function has to manipulate self._data variable that 
+        '''
+        This function has to manipulate self._data variable that 
         should store internal readings ready to be dumped by 
-        get_output()'''
+        get_output().
+        '''
         raise NotImplementedError()
     
     def get_output(self):
-        '''Returns a dictionary ready to be sent to i3bar'''
+        '''
+        Returns a dictionary ready to be sent to i3bar.
+        '''
         output = {'full_text': self._data['full_text'],
                   'name': self.name,
                   }
@@ -98,17 +104,21 @@ class WorkerThread(Thread):
 
 
 class GetTemp(WorkerThread):
-    '''Skeleton Class for worker threads monitoring temperature of
-    various pc components.'''
+    '''
+    Skeleton Class for worker threads monitoring temperature of
+    various pc components.
+    '''
     def __init__(self, temp_warning, temp_critical, **kwargs):
         WorkerThread.__init__(self, **kwargs)
         self.temp_warning = float(temp_warning)
         self.temp_critical = float(temp_critical)
         
     def _check_temp(self, temp):
-        '''If the measured temperature is higher than temp_critical 
+        '''
+        If the measured temperature is higher than temp_critical 
         value, display it and set urgency. Stop displaying when
-        temperature drops below temp_warning threshold.'''
+        temperature drops below temp_warning threshold.
+        '''
         if temp >= self.temp_critical:
             self._data['color'] = self.color_critical
             self.urgent = True
@@ -123,9 +133,11 @@ class GetTemp(WorkerThread):
 
         
 class MPDCurrentSong(WorkerThread):
-    '''Grabs current sog from MPD. Shows data only if MPD is 
+    '''
+    Grabs current sog from MPD. Shows data only if MPD is 
     currently playing. If exception is encountered, 
-    try to reconnect until succesfull.'''
+    try to reconnect until succesfull.
+    '''
     def __init__(self, host, port, **kwargs):
         WorkerThread.__init__(self, **kwargs)
         self.host = host
@@ -141,7 +153,9 @@ class MPDCurrentSong(WorkerThread):
             pass
         
     def _update_data(self):
-        '''Updates self._data to a string in a format "Artist - Song"'''
+        '''
+        Updates self._data to a string in a format "Artist - Song"
+        '''
         try:
             if (self.mpd_client.status()['state'] == 'stop' or 
                 self.mpd_client.status()['state'] == 'pause'):
@@ -167,7 +181,9 @@ class MPDCurrentSong(WorkerThread):
 
     
 class HDDTemp(GetTemp):
-    '''Monitors HDD temperature, depends on hddtemp daemon running.'''
+    '''
+    Monitors HDD temperature, depends on hddtemp daemon running.
+    '''
     def __init__(self, host, port, **kwargs):
         GetTemp.__init__(self, **kwargs)
         self.host = host
@@ -194,8 +210,10 @@ class HDDTemp(GetTemp):
     
 
 class GPUTemp(GetTemp):
-    '''Monitors the temperature of GPU with properietary drivers 
-    installed. Use HwmonTemp for open-source ones.''' 
+    '''
+    Monitors the temperature of GPU with properietary drivers 
+    installed. Use HwmonTemp for open-source ones.
+    ''' 
     def __init__(self, vendor, **kwargs):
         GetTemp.__init__(self, **kwargs)
         if vendor == 'catalyst':
@@ -214,10 +232,12 @@ class GPUTemp(GetTemp):
         self._check_temp(temp)
         
 class HwmonTemp(GetTemp):
-    '''Reads temperature from every file specified in temp_files list
+    '''
+    Reads temperature from every file specified in temp_files list
     and displays the highest one. Altough this class is supposed to deal
     with CPU temperatures, any temperature file from hwmon driver should
-    work.'''
+    work.
+    '''
     def __init__(self, temp_files, **kwargs):
         GetTemp.__init__(self, **kwargs)
         self.temp_files = temp_files.split()
@@ -239,9 +259,11 @@ class HwmonTemp(GetTemp):
 
         
 class DiskUsage(WorkerThread):
-    '''Monitor disk usage using psutil interface. Shows data only when
+    '''
+    Monitor disk usage using psutil interface. Shows data only when
     free space on one or more partitions is less than 
-    (100 - self.percentage)%'''
+    (100 - self.percentage)%.
+    '''
     def __init__(self, mountpoint, percentage, **kwargs):
         WorkerThread.__init__(self, **kwargs)
         self.percentage = float(percentage)
@@ -271,7 +293,9 @@ class DiskUsage(WorkerThread):
                 self.urgent = False
 
     def human_size(self, byte):
-        '''Present amount of bytes in human-readable format.'''
+        '''
+        Present amount of bytes in human-readable format.
+        '''
         if byte == 0:
             return '0.0 B'
         suffixes = ('B' ,'K', 'M', 'G', 'T', 'P')
@@ -296,7 +320,9 @@ class Date(WorkerThread):
 
     
 class BatteryStatus(WorkerThread):
-    '''Monitors battery status. Lots of files!'''
+    '''
+    Monitors battery status. Lots of files!
+    '''
     def __init__(self,
             critical,
             battery_file_full,
@@ -352,7 +378,10 @@ class BatteryStatus(WorkerThread):
 
             
 class WirelessStatus(WorkerThread):
-    '''Monitor if given interface is connected to the internet.'''
+    '''
+    Monitor if given interface is connected to the internet. Uses ioctl()
+    call.
+    '''
     def __init__(self, interface, **kwargs):
         WorkerThread.__init__(self, **kwargs)
         self.interface = interface
@@ -396,8 +425,10 @@ class WirelessStatus(WorkerThread):
 
     
 class Volume(WorkerThread):
-    '''Monitor volume of the given channel usilg alssaudio python 
-    library.'''
+    '''
+    Monitor volume of the given channel usilg alssaudio python 
+    library.
+    '''
     def __init__(self, 
                  channel,
                  mixer_id, 
@@ -434,17 +465,18 @@ class Volume(WorkerThread):
 
         
 class XInfo(WorkerThread):
-    '''I need to come up with a better solution, but this will do for now.
-    Shows if *Lock keys are on, and if DPMS of the monitor is off.'''
+    '''
+    I need to come up with a better solution, but this will do for now.
+    Shows if *Lock keys are on.
+    '''
     def __init__(self, **kwargs):
         WorkerThread.__init__(self, **kwargs)
         self.command = 'xset q'.split()
         self.lock_keys_re = re.compile(r'(Caps Lock|Num Lock|Scroll Lock):\s*(off|on)')
-        self.dpms_re = re.compile(r'DPMS is (?P<state>Enabled|Disabled)')
         self._data['color'] = self.color_warning
         
     def _update_data(self):
-        xset = Popen(self.command, stdout = PIPE)
+        xset = Popen(self.command, stdout=PIPE)
         output = xset.stdout.read().decode()
         self._data['full_text'] = ''
         
@@ -453,20 +485,52 @@ class XInfo(WorkerThread):
             if state == 'on':
                 self._data['full_text'] += key + ' '
         
-        dpms_state = self.dpms_re.search(output).group('state')
-        if dpms_state == 'Disabled':
-            self._data['full_text'] += 'DPMS'
-        
         if self._data['full_text']:
             self._data['full_text'] = self._data['full_text'].strip()
             self.show = True
         else:
             self.show = False
         
+        
+class DPMS(WorkerThread):
+    '''
+    Recieves messages from external script, that turns DPMS on/off.
+    Script: https://github.com/kaszak/dots/blob/master/bin/dpms_on_off.py
+    ''' 
+    def __init__(self, host, port, **kwargs):
+        WorkerThread.__init__(self, **kwargs)
+        self.host = host
+        self.port = int(port)
+        # Override default interval, socket.accept() will serve as a timer/blocker
+        self.interval = 0 
+        self.listener = socket()
+        # Allow unobstructed statusbar restarting by allowing to reuse socket
+        self.listener.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+        self.listener.bind((self.host, self.port))
+        with open('/tmp/.statusbar.port', 'w') as port_file:
+            port_file.write(str(self.port))
+        self.listener.listen(1)
+        self._data['color'] = self.color_warning
+        self._data['full_text'] = 'DPMS'
+        
+    def _update_data(self):
+        connection, address = self.listener.accept()
+        if address[0] != '127.0.0.1': # refuse remote connections
+            connection.close()
+            return
+            
+        message = connection.recv(4096)
+        if message == b'OFF':
+            self.show = True
+        else:
+            self.show = False
+        
+        
 
 class StatusBar():
     def __init__(self):
         self.threads = []
+        # Holds the last known output of threads
         self.data = []
         self.comma = ''
         self.updates = Queue()
@@ -482,15 +546,17 @@ class StatusBar():
         
         order = config['DEFAULT'].pop('order').split()
 
+        # Initialize threads and start them.
+        # While at it, populate data list
         for i, entry in enumerate(order):
             self.threads.append(globals()[config[entry].pop('class_type')](
                                 idn=i, queue=self.updates, **config[entry]))
             self.data.append(None)
-        for thread in self.threads:
-            thread.start()
+            self.threads[i].start()
     
     def _handle_updates(self):
         while self.updates:
+            # Blocks here, message expected is (thread number, dict with output or None)
             idn, entry = self.updates.get()
             self.updates.task_done()
             self.data[idn] = entry
