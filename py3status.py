@@ -44,6 +44,7 @@ class WorkerThread(Thread):
                  interval,
                  color_critical,
                  color_warning, 
+                 color_normal,
                  **kwargs):
         Thread.__init__(self, **kwargs)
         self.daemon = True # kill threads when StatusBar exits
@@ -55,12 +56,13 @@ class WorkerThread(Thread):
         self.idn = idn #Identification number, sort of
         self.color_warning = color_warning
         self.color_critical =  color_critical
+        self.color_normal = color_normal
         self.queue = queue
         
         # Template for self._data, mangled by get_output()
         self._data = {'full_text': '',
                       'short_text': '',
-                      'color': ''
+                      'color': self.color_normal
                      }
         
         # prevoius value of _data, for comparision
@@ -340,7 +342,6 @@ class BatteryStatus(WorkerThread):
         self.battery_file_status = battery_file_status
         
     def _update_data(self):
-        self.color = ''
         with open(self.battery_file_present) as bat_p:
             present = bat_p.read().strip()
         if present != '1':
@@ -367,7 +368,7 @@ class BatteryStatus(WorkerThread):
                 self._data['color'] = self.color_critical
             else:
                 self.urgent = False
-                self._data['color'] = ''
+                self._data['color'] = self.color_normal
             self._data['full_text'] = '{} {:.0f}%'.format(status, 
                 percentage)
             self._data['short_text'] = '{} {:.0f}%'.format(status_s, 
@@ -415,7 +416,7 @@ class WirelessStatus(WorkerThread):
         if output:
             self._data['full_text'] = output
             self._data['short_text'] = output
-            self._data['color'] = ''
+            self._data['color'] = self.color_normal
             self.urgent = False
         else:
             self._data['full_text'] = '{} disconnected'.format(
@@ -462,7 +463,7 @@ class Volume(WorkerThread):
             if muted[i]:
                 self._data['color'] = self.color_critical
             else:
-                self._data['color'] = ''
+                self._data['color'] = self.color_normal
 
         
 class XInfo(WorkerThread):
