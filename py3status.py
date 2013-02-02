@@ -67,7 +67,15 @@ class WorkerThread(Thread):
         
         # prevoius value of _data, for comparision
         self._data_prev = self._data.copy()
-        
+    
+    def _fill_queue(self):
+        if self.show and (True if self.blanked else (self._data != self._data_prev)):
+            self.queue.put((self.idn, self.get_output()))
+            self._data_prev = self._data.copy()
+            self.blanked = False
+        elif not self.show if not self.blanked else False:
+            self.queue.put((self.idn, None))
+            self.blanked = True
         
     def _update_data(self):
         '''
@@ -96,13 +104,7 @@ class WorkerThread(Thread):
         '''Main worker loop.'''
         while True:
             self._update_data()
-            if self.show and (True if self.blanked else (self._data != self._data_prev)):
-                self.queue.put((self.idn, self.get_output()))
-                self._data_prev = self._data.copy()
-                self.blanked = False
-            elif not self.show if not self.blanked else False:
-                self.queue.put((self.idn, None))
-                self.blanked = True
+            self._fill_queue()
             sleep(self.interval)
 
 
@@ -184,6 +186,8 @@ class MPDCurrentSong(WorkerThread):
         self.mpd_lock = Lock()
         wait_for_commands = Thread(target=self._command_mangler, daemon=True)
         wait_for_commands.start()
+        if not self.is_stopped():
+            self._playing()
         
     def _connect_to_mpd(self):
         try:
@@ -198,34 +202,48 @@ class MPDCurrentSong(WorkerThread):
         else:
             return False
     
+    def _playing(self):
+        self.show = True
+        self.playing.set()
+    
+    def _pausing(self):
+        self.playing.clear()
+        self.show = False
+    
     def _command_mangler(self):
         while True:
             command = self.commandq.get()
             self.mpd_lock.acquire()
-            if command == 'toggle':
-                try:
+            try:
+                if command == 'toggle':
                     if self.is_stopped():
                         self.mpd_client.play()
-                        self.playing.set()
-                        self.show = True
-                        self._update_data()
+                        self._playing()
                     else:
                         self.mpd_client.pause()
-                        self.playing.clear()
-                        self.show = False
-                except:
-                    self.show = False
-                    self._connect_to_mpd()
-                finally:
-                    self.mpd_lock.release()
+                        self._pausing()
+                elif command == 'next' or command == 'prev':
+                    if command == 'next':
+                        self.mpd_client.next()
+                    else:
+                        self.mpd_client.previous()
+                    if self.is_stopped():
+                        self.mpd_client.play()
+                        self._playing()
+                        
+            except:
+                self.show = False
+                self._connect_to_mpd()
+            finally:
+                self.mpd_lock.release()
+                self._fill_queue()
                     
     def _update_data(self):
         '''
         Updates self._data to a string in a format "Artist - Song"
         '''
         
-        if not self.playing.is_set():
-            return
+        self.playing.wait()
         self.mpd_lock.acquire()
         try:
                 song = self.mpd_client.currentsong()
