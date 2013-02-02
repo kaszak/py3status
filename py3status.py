@@ -16,7 +16,7 @@
 #  
 
 from json import dumps
-from subprocess import Popen, PIPE
+from subprocess import Popen, call, PIPE
 from socket import socket, SOCK_DGRAM
 from threading import Thread
 from queue import Queue
@@ -133,7 +133,38 @@ class GetTemp(WorkerThread):
             self.show = False
             self.urgent = False
         self._data['full_text'] = '{}: {}C'.format(self.name, temp)
-
+        
+        
+class FIFObserver(Thread):
+    def __init__(self, fifofile, **kwargs):
+        Thread.__init__(self, **kwargs)
+        self.daemon = True
+        self.fifofile = fifofile
+        self._make_fifo()
+        # Avaible commands to be processed by this class
+        # Registered with register_command()
+        self._commands = {}
+            
+    def _make_fifo(self):
+        try:
+            os.mkfifo(self.fifofile)
+        except OSError:
+            os.remove(self.fifofile)
+            self._make_fifo()
+    
+    def register_command(self, command, queue):
+        self._commands[command.lower()] = queue
+    
+    def run(self):
+        while True:
+            with open(self.fifofile) as fifo:
+                # Should be a string 'TARGET:COMMAND', so output will be
+                # a 2-item list
+                target, command = fifo.read().strip().split(':')
+                # Normalize commands
+                target, command = target.lower(), command.lower()
+            if target in self._commands:
+                self._commands[target].put(command)
         
 class MPDCurrentSong(WorkerThread):
     '''
@@ -500,29 +531,38 @@ class DPMS(WorkerThread):
     We can assume that DPMS is always on initially.
     Script: https://github.com/kaszak/dots/blob/master/bin/dpms_on_off.py
     ''' 
-    def __init__(self, fifoname, **kwargs):
+    def __init__(self, observer, **kwargs):
         WorkerThread.__init__(self, **kwargs)
-        self.fifoname = fifoname
+        self.dpms_re = re.compile(r'DPMS is (?P<state>Enabled|Disabled)')
+        self.command_q = 'xset q'.split()
+        self.command_off = 'xset -dpms; xset s off'
+        self.command_on = 'xset +dpms; xset s on'
+        self.command_dpms_off = 'xset dpms force off'
+        self.commandq = Queue()
+        observer.register_command('dpms', self.commandq)
+        
         # Override default interval, fifo will serve as a timer/blocker
-        self.interval = 0 
-        try:
-            os.mkfifo(self.fifoname)
-        except OSError:
-            os.remove(self.fifoname)
-            os.mkfifo(self.fifoname)
+        self.interval = 0
         self._data['color'] = self.color_warning
         self._data['full_text'] = 'DPMS'
         
     def _update_data(self):
-        with open(self.fifoname) as fifo:
-            message = fifo.read()
-            
-        if message == 'OFF':
-            self.show = True
-        else:
+        message = self.commandq.get().lower()
+        if message == 'toggle':
+            xset = Popen(self.command_q, stdout=PIPE)
+            output = xset.stdout.read().decode()
+            dpms_state = self.dpms_re.search(output).group('state')
+            if dpms_state == 'Enabled':
+                call(self.command_off, shell=True)
+                self.show = True
+            else:
+                call(self.command_on, shell=True)
+                self.show = False
+        elif message == 'off':
+            call(self.command_dpms_off, shell=True)
+            # DPMS always turns on if you call this command
             self.show = False
-        
-        
+
 
 class StatusBar():
     def __init__(self):
@@ -532,7 +572,6 @@ class StatusBar():
         self.comma = ''
         self.updates = Queue()
         
-        
     def _start_threads(self):
         config = ConfigParser()
         config.read([expanduser('~/.py3status.conf'),
@@ -541,13 +580,25 @@ class StatusBar():
                     '/etc/py3status.conf'
                     ])
         
+        self.observer = FIFObserver(fifofile='/tmp/statusbar.fifo')
+        self.observer.start()
+        
         order = config['DEFAULT'].pop('order').split()
 
         # Initialize threads and start them.
         # While at it, populate data list
         for i, entry in enumerate(order):
-            self.threads.append(globals()[config[entry].pop('class_type')](
-                                idn=i, queue=self.updates, **config[entry]))
+            arguments = {'idn': i,
+                         'queue': self.updates
+                         }
+            observe = config[entry].getboolean('observer')
+            if observe:
+                config[entry].pop('observer')
+                arguments['observer'] = self.observer
+            class_type = config[entry].pop('class_type')
+            # Trick for merging two dictionaries
+            arguments = dict(list(arguments.items()) + list(config[entry].items()))
+            self.threads.append(globals()[class_type](**arguments))
             self.data.append(None)
             self.threads[i].start()
     
