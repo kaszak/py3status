@@ -18,7 +18,7 @@
 from json import dumps
 from subprocess import Popen, call, PIPE
 from socket import socket, SOCK_DGRAM
-from threading import Thread
+from threading import Thread, Event, Lock
 from queue import Queue
 from time import sleep, strftime
 from configparser import ConfigParser
@@ -172,29 +172,62 @@ class MPDCurrentSong(WorkerThread):
     currently playing. If exception is encountered, 
     try to reconnect until succesfull.
     '''
-    def __init__(self, host, port, **kwargs):
+    def __init__(self, host, port, observer, **kwargs):
         WorkerThread.__init__(self, **kwargs)
         self.host = host
         self.port = int(port)
         self.mpd_client = MPDClient()
         self._connect_to_mpd()
-        
+        self.commandq = Queue()
+        observer.register_command('mpd', self.commandq)
+        self.playing = Event()
+        self.mpd_lock = Lock()
+        wait_for_commands = Thread(target=self._command_mangler, daemon=True)
+        wait_for_commands.start()
         
     def _connect_to_mpd(self):
         try:
             self.mpd_client.connect(self.host, self.port)
         except (ConnectionError, ConnectionRefusedError):
             pass
-        
+    
+    def is_stopped(self):
+        if (self.mpd_client.status()['state'] == 'stop' or 
+        self.mpd_client.status()['state'] == 'pause'):
+            return True
+        else:
+            return False
+    
+    def _command_mangler(self):
+        while True:
+            command = self.commandq.get()
+            self.mpd_lock.acquire()
+            if command == 'toggle':
+                try:
+                    if self.is_stopped():
+                        self.mpd_client.play()
+                        self.playing.set()
+                        self.show = True
+                        self._update_data()
+                    else:
+                        self.mpd_client.pause()
+                        self.playing.clear()
+                        self.show = False
+                except:
+                    self.show = False
+                    self._connect_to_mpd()
+                finally:
+                    self.mpd_lock.release()
+                    
     def _update_data(self):
         '''
         Updates self._data to a string in a format "Artist - Song"
         '''
+        
+        if not self.playing.is_set():
+            return
+        self.mpd_lock.acquire()
         try:
-            if (self.mpd_client.status()['state'] == 'stop' or 
-                self.mpd_client.status()['state'] == 'pause'):
-                self.show = False
-            else:
                 song = self.mpd_client.currentsong()
             
                 if 'artist' in song:
@@ -208,10 +241,10 @@ class MPDCurrentSong(WorkerThread):
                     mpd_title = 'Unknown Title'
                 self._data['full_text'] = mpd_artist + ' - ' + mpd_title
                 self._data['short_text'] = mpd_title
-                self.show = True
         except (ConnectionError, ConnectionRefusedError):
-            self.show = False
             self._connect_to_mpd()
+        finally:
+            self.mpd_lock.release()
 
     
 class HDDTemp(GetTemp):
@@ -547,8 +580,8 @@ class DPMS(WorkerThread):
         self._data['full_text'] = 'DPMS'
         
     def _update_data(self):
-        message = self.commandq.get().lower()
-        if message == 'toggle':
+        command = self.commandq.get().lower()
+        if command == 'toggle':
             xset = Popen(self.command_q, stdout=PIPE)
             output = xset.stdout.read().decode()
             dpms_state = self.dpms_re.search(output).group('state')
@@ -558,7 +591,7 @@ class DPMS(WorkerThread):
             else:
                 call(self.command_on, shell=True)
                 self.show = False
-        elif message == 'off':
+        elif command == 'off':
             call(self.command_dpms_off, shell=True)
             # DPMS always turns on if you call this command
             self.show = False
