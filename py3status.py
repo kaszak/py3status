@@ -517,35 +517,52 @@ class Volume(WorkerThread):
                  channel,
                  mixer_id, 
                  card_index, 
+                 observer,
                  **kwargs):
         WorkerThread.__init__(self, **kwargs)
         self.channel = channel
         self.mixer_id = int(mixer_id)
         self.card_index = int(card_index)
+        self.commandq = Queue()
+        observer.register_command('alsa', self.commandq)
+        self.interval = 0
+        self.amixer = Mixer(control=self.channel, 
+                            id=self.mixer_id,
+                            cardindex=self.card_index)
+        self._update_volume()
         self.show = True
-        self.amixer = Mixer(control=self.channel, 
-                            id=self.mixer_id,
-                            cardindex=self.card_index)
-        self.channels = len(self.amixer.getvolume())
-            
+        self._fill_queue()
+        
+    def _sanitize_volume(self, volume):
+        if volume > 100:
+            volume = 100
+        elif volume < 0:
+            volume = 0
+        return volume
+        
     def _update_data(self):
-        self.amixer = Mixer(control=self.channel, 
-                            id=self.mixer_id,
-                            cardindex=self.card_index)
-        self._data['full_text'] = '♪:'
-        try:
-            muted = self.amixer.getmute()
-        except ALSAAudioError:
-            muted = [False for i in range(0, self.channels)]
+        command = self.commandq.get()
+        if command == 'up':
+            new_volume = self._sanitize_volume(self.amixer.getvolume()[0] + 5)
+            self.amixer.setvolume(new_volume)
+        elif command == 'down':
+            new_volume = self._sanitize_volume(self.amixer.getvolume()[0] - 5)
+            self.amixer.setvolume(new_volume)
+        elif command == 'mute':
+            if not self.amixer.getmute()[0]:
+                self.amixer.setmute(1)
+            else: 
+                self.amixer.setmute(0)
+        self._update_volume()
+            
+    def _update_volume(self):
+        muted = self.amixer.getmute()
         volume = self.amixer.getvolume()
-        for i in range(0, self.channels):
-            self._data['full_text'] += '{:3d}%'.format(volume[i])
-            if i < self.channels - 1:
-                self._data['full_text'] += ' '
-            if muted[i]:
-                self._data['color'] = self.color_critical
-            else:
-                self._data['color'] = self.color_normal
+        self._data['full_text'] = '♪:{:3d}%'.format(volume[0])
+        if muted[0]:
+            self._data['color'] = self.color_critical
+        else:
+            self._data['color'] = self.color_normal
 
         
 class XInfo(WorkerThread):
@@ -580,7 +597,6 @@ class DPMS(WorkerThread):
     '''
     Recieves messages from external script, that turns DPMS on/off.
     We can assume that DPMS is always on initially.
-    Script: https://github.com/kaszak/dots/blob/master/bin/dpms_on_off.py
     ''' 
     def __init__(self, observer, **kwargs):
         WorkerThread.__init__(self, **kwargs)
@@ -655,7 +671,7 @@ class StatusBar():
     
     def _handle_updates(self):
         while self.updates:
-            # Blocks here, message expected is (thread number, dict with output or None)
+            # Blocks here, message expected is (thread id, get_output() with output or None)
             idn, entry = self.updates.get()
             self.updates.task_done()
             self.data[idn] = entry
