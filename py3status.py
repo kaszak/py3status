@@ -138,10 +138,15 @@ class GetTemp(WorkerThread):
         
         
 class FIFObserver(Thread):
-    def __init__(self, fifofile, **kwargs):
+    '''
+    Reads messages sent to a named pipe and hands them to appropriate
+    handler.
+    '''
+    def __init__(self, **kwargs):
         Thread.__init__(self, **kwargs)
         self.daemon = True
-        self.fifofile = fifofile
+        self.dir = '/tmp/' + os.getenv('USER')
+        self.fullpath = self.dir + '/py3status.fifo'
         self._make_fifo()
         # Avaible commands to be processed by this class
         # Registered with register_command()
@@ -149,28 +154,31 @@ class FIFObserver(Thread):
             
     def _make_fifo(self):
         try:
-            os.mkfifo(self.fifofile)
+            os.remove(self.fullpath)
+            os.rmdir(self.dir)
         except OSError:
-            os.remove(self.fifofile)
-            self._make_fifo()
+            pass
+        finally:
+            os.mkdir(self.dir)
+            os.mkfifo(self.fullpath)
     
     def register_command(self, command, queue):
         self._commands[command.lower()] = queue
     
     def run(self):
         while True:
-            with open(self.fifofile) as fifo:
+            with open(self.fullpath) as fifo:
                 # Should be a string 'TARGET:COMMAND', so output will be
                 # a 2-item list
                 target, command = fifo.read().strip().split(':')
-                # Normalize commands
-                target, command = target.lower(), command.lower()
+            # Normalize commands
+            target, command = target.lower(), command.lower()
             if target in self._commands:
                 self._commands[target].put(command)
         
 class MPDCurrentSong(WorkerThread):
     '''
-    Grabs current sog from MPD. Shows data only if MPD is 
+    Grabs current song from MPD. Shows data only if MPD is 
     currently playing. If exception is encountered, 
     try to reconnect until succesfull.
     '''
@@ -598,13 +606,18 @@ class DPMS(WorkerThread):
     Recieves messages from external script, that turns DPMS on/off.
     We can assume that DPMS is always on initially.
     ''' 
-    def __init__(self, observer, **kwargs):
+    def __init__(self, observer,
+                 command_q, 
+                 command_off, 
+                 command_on,
+                 turn_screen_off,
+                 **kwargs):
         WorkerThread.__init__(self, **kwargs)
         self.dpms_re = re.compile(r'DPMS is (?P<state>Enabled|Disabled)')
-        self.command_q = 'xset q'.split()
-        self.command_off = 'xset -dpms; xset s off'
-        self.command_on = 'xset +dpms; xset s on'
-        self.command_dpms_off = 'xset dpms force off'
+        self.command_q = command_q.split()
+        self.command_off = command_off
+        self.command_on = command_on
+        self.turn_screen_off = turn_screen_off
         self.commandq = Queue()
         observer.register_command('dpms', self.commandq)
         
@@ -626,7 +639,7 @@ class DPMS(WorkerThread):
                 call(self.command_on, shell=True)
                 self.show = False
         elif command == 'off':
-            call(self.command_dpms_off, shell=True)
+            call(self.turn_screen_off, shell=True)
             # DPMS always turns on if you call this command
             self.show = False
 
@@ -647,7 +660,7 @@ class StatusBar():
                     '/etc/py3status.conf'
                     ])
         
-        self.observer = FIFObserver(fifofile='/tmp/statusbar.fifo')
+        self.observer = FIFObserver()
         self.observer.start()
         
         order = config['DEFAULT'].pop('order').split()

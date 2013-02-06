@@ -22,8 +22,9 @@
 #  
 #  
 import sys
+import os
 
-FIFO = '/tmp/statusbar.fifo'
+FIFO = '/tmp/' + os.getenv('USER') + '/py3status.fifo'
 
 def main():
     '''
