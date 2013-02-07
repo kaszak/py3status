@@ -170,11 +170,17 @@ class FIFObserver(Thread):
             with open(self.fullpath) as fifo:
                 # Should be a string 'TARGET:COMMAND', so output will be
                 # a 2-item list
-                target, command = fifo.read().strip().split(':')
+                stuff = fifo.read().strip()
             # Normalize commands
-            target, command = target.lower(), command.lower()
-            if target in self._commands:
-                self._commands[target].put(command)
+            try:
+                target, command = stuff.split(':')
+            except ValueError:
+                #Wrong thingie, ignore it
+                pass
+            else:
+                target, command = target.lower(), command.lower()
+                if target in self._commands:
+                    self._commands[target].put(command)
         
 class MPDCurrentSong(WorkerThread):
     '''
@@ -620,11 +626,21 @@ class DPMS(WorkerThread):
         self.turn_screen_off = turn_screen_off
         self.commandq = Queue()
         observer.register_command('dpms', self.commandq)
-        
         # Override default interval, fifo will serve as a timer/blocker
         self.interval = 0
         self._data['color'] = self.color_warning
         self._data['full_text'] = 'DPMS'
+        self.show = self._is_disabled()
+        self._fill_queue()
+    
+    def _is_disabled(self):
+        xset = Popen(self.command_q, stdout=PIPE)
+        output = xset.stdout.read().decode()
+        dpms_state = self.dpms_re.search(output).group('state')
+        if dpms_state == 'Enabled':
+            return False
+        else:
+            return True
         
     def _update_data(self):
         command = self.commandq.get().lower()
@@ -632,12 +648,12 @@ class DPMS(WorkerThread):
             xset = Popen(self.command_q, stdout=PIPE)
             output = xset.stdout.read().decode()
             dpms_state = self.dpms_re.search(output).group('state')
-            if dpms_state == 'Enabled':
-                call(self.command_off, shell=True)
-                self.show = True
-            else:
+            if self._is_disabled():
                 call(self.command_on, shell=True)
                 self.show = False
+            else:
+                call(self.command_off, shell=True)
+                self.show = True
         elif command == 'off':
             call(self.turn_screen_off, shell=True)
             # DPMS always turns on if you call this command
