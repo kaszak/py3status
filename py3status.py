@@ -3,17 +3,17 @@
 #  it under the terms of the GNU General Public License as published by
 #  the Free Software Foundation; either version 2 of the License, or
 #  (at your option) any later version.
-#  
+#
 #  This program is distributed in the hope that it will be useful,
 #  but WITHOUT ANY WARRANTY; without even the implied warranty of
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #  GNU General Public License for more details.
-#  
+#
 #  You should have received a copy of the GNU General Public License
 #  along with this program; if not, write to the Free Software
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #  MA 02110-1301, USA.
-#  
+#
 
 from json import dumps
 from subprocess import Popen, call, PIPE
@@ -33,58 +33,60 @@ from mpd import MPDClient, ConnectionError
 from psutil import disk_partitions, disk_usage
 from alsaaudio import Mixer, ALSAAudioError
 
+
 class WorkerThread(Thread):
     '''
     Skeleton Class for all worker threads.
     '''
-    def __init__(self, 
-                 name, 
-                 idn, 
-                 queue, 
+    def __init__(self,
+                 name,
+                 idn,
+                 queue,
                  interval,
                  color_critical,
-                 color_warning, 
+                 color_warning,
                  color_normal,
                  **kwargs):
         Thread.__init__(self, **kwargs)
-        self.daemon = True # kill threads when StatusBar exits
+        self.daemon = True  # kill threads when StatusBar exits
         self.show = False
         self.urgent = False
-        self.blanked = True # was the output empty previously?
+        self.blanked = True  # was the output empty previously?
         self.interval = int(interval)
         self.name = name
-        self.idn = idn #Identification number, sort of
+        self.idn = idn  # Identification number, sort of
         self.color_warning = color_warning
-        self.color_critical =  color_critical
+        self.color_critical = color_critical
         self.color_normal = color_normal
         self.queue = queue
-        
+
         # Template for self._data, mangled by get_output()
         self._data = {'full_text': '',
                       'short_text': '',
                       'color': self.color_normal
-                     }
-        
+                      }
+
         # prevoius value of _data, for comparision
         self._data_prev = self._data.copy()
-    
+
     def _fill_queue(self):
-        if self.show and (True if self.blanked else (self._data != self._data_prev)):
+        if self.show and (True if self.blanked
+                          else (self._data != self._data_prev)):
             self.queue.put((self.idn, self.get_output()))
             self._data_prev = self._data.copy()
             self.blanked = False
         elif not self.show if not self.blanked else False:
             self.queue.put((self.idn, None))
             self.blanked = True
-        
+
     def _update_data(self):
         '''
-        This function has to manipulate self._data variable that 
-        should store internal readings ready to be dumped by 
+        This function has to manipulate self._data variable that
+        should store internal readings ready to be dumped by
         get_output().
         '''
         raise NotImplementedError()
-    
+
     def get_output(self):
         '''
         Returns a dictionary ready to be sent to i3bar.
@@ -99,7 +101,7 @@ class WorkerThread(Thread):
         if self.urgent:
             output['urgent'] = self.urgent
         return output
-    
+
     def run(self):
         '''Main worker loop.'''
         while True:
@@ -117,10 +119,10 @@ class GetTemp(WorkerThread):
         WorkerThread.__init__(self, **kwargs)
         self.temp_warning = float(temp_warning)
         self.temp_critical = float(temp_critical)
-        
+
     def _check_temp(self, temp):
         '''
-        If the measured temperature is higher than temp_critical 
+        If the measured temperature is higher than temp_critical
         value, display it and set urgency. Stop displaying when
         temperature drops below temp_warning threshold.
         '''
@@ -135,8 +137,8 @@ class GetTemp(WorkerThread):
             self.show = False
             self.urgent = False
         self._data['full_text'] = '{}: {}C'.format(self.name, temp)
-        
-        
+
+
 class FIFObserver(Thread):
     '''
     Reads messages sent to a named pipe and hands them to appropriate
@@ -151,7 +153,7 @@ class FIFObserver(Thread):
         # Avaible commands to be processed by this class
         # Registered with register_command()
         self._commands = {}
-            
+
     def _make_fifo(self):
         try:
             os.remove(self.fullpath)
@@ -161,10 +163,10 @@ class FIFObserver(Thread):
         finally:
             os.mkdir(self.dir)
             os.mkfifo(self.fullpath)
-    
+
     def register_command(self, command, queue):
         self._commands[command.lower()] = queue
-    
+
     def run(self):
         while True:
             with open(self.fullpath) as fifo:
@@ -181,11 +183,12 @@ class FIFObserver(Thread):
                 target, command = target.lower(), command.lower()
                 if target in self._commands:
                     self._commands[target].put(command)
-        
+
+
 class MPDCurrentSong(WorkerThread):
     '''
-    Grabs current song from MPD. Shows data only if MPD is 
-    currently playing. If exception is encountered, 
+    Grabs current song from MPD. Shows data only if MPD is
+    currently playing. If exception is encountered,
     try to reconnect until succesfull.
     '''
     def __init__(self, host, port, observer, **kwargs):
@@ -202,28 +205,28 @@ class MPDCurrentSong(WorkerThread):
         wait_for_commands.start()
         if not self.is_stopped():
             self._playing()
-        
+
     def _connect_to_mpd(self):
         try:
             self.mpd_client.connect(self.host, self.port)
         except (ConnectionError, ConnectionRefusedError):
             pass
-    
+
     def is_stopped(self):
-        if (self.mpd_client.status()['state'] == 'stop' or 
-        self.mpd_client.status()['state'] == 'pause'):
+        if (self.mpd_client.status()['state'] == 'stop' or
+                self.mpd_client.status()['state'] == 'pause'):
             return True
         else:
             return False
-    
+
     def _playing(self):
         self.show = True
         self.playing.set()
-    
+
     def _pausing(self):
         self.playing.clear()
         self.show = False
-    
+
     def _command_mangler(self):
         while True:
             command = self.commandq.get()
@@ -244,29 +247,29 @@ class MPDCurrentSong(WorkerThread):
                     if self.is_stopped():
                         self.mpd_client.play()
                         self._playing()
-                        
+
             except:
                 self.show = False
                 self._connect_to_mpd()
             finally:
                 self.mpd_lock.release()
                 self._fill_queue()
-                    
+
     def _update_data(self):
         '''
         Updates self._data to a string in a format "Artist - Song"
         '''
-        
+
         self.playing.wait()
         self.mpd_lock.acquire()
         try:
                 song = self.mpd_client.currentsong()
-            
+
                 if 'artist' in song:
                     mpd_artist = song['artist']
                 else:
                     mpd_artist = 'Unknown Artist'
-            
+
                 if 'title' in song:
                     mpd_title = song['title']
                 else:
@@ -278,7 +281,7 @@ class MPDCurrentSong(WorkerThread):
         finally:
             self.mpd_lock.release()
 
-    
+
 class HDDTemp(GetTemp):
     '''
     Monitors HDD temperature, depends on hddtemp daemon running.
@@ -287,10 +290,10 @@ class HDDTemp(GetTemp):
         GetTemp.__init__(self, **kwargs)
         self.host = host
         self.port = int(port)
-    
+
     def _update_data(self):
         temp = 0
-        # Hddtemp sometimes sends empty data, try until it sends 
+        # Hddtemp sometimes sends empty or incomplete data, try until it sends 
         # something worthwhile.
         while not temp:
             hdd_temp = socket()
@@ -397,7 +400,7 @@ class DiskUsage(WorkerThread):
         '''
         if byte == 0:
             return '0.0 B'
-        suffixes = ('B' ,'K', 'M', 'G', 'T', 'P')
+        suffixes = ('B', 'K', 'M', 'G', 'T', 'P')
         values = {}
         for n, suffix in enumerate(suffixes):
             values[suffix] = pow(2, (n*10))

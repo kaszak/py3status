@@ -23,8 +23,34 @@
 #  
 import sys
 import os
+from time import sleep
 
 FIFO = '/tmp/' + os.getenv('USER') + '/py3status.fifo'
+
+class FileLock():
+    def __init__(self, file_path, delay=.05):
+        self._lock_path = file_path + '.lock'
+        self._locked = False
+        self.delay = delay
+        
+    def acquire(self):
+        while True:
+            try:
+                self.descriptor = os.open(self._lock_path, flags=os.O_CREAT|os.O_EXCL|os.O_RDWR)
+                break
+            except OSError as fuck:
+                if fuck.errno == 17: #  Means that the file already exist
+                    sleep(self.delay)
+                else:
+                    raise
+        self._locked = True
+        
+    def release(self):
+        if self._locked:
+            os.close(self.descriptor)
+            os.unlink(self._lock_path)
+            self._locked = False
+            
 
 def main():
     '''
@@ -37,10 +63,12 @@ def main():
     
     target = sys.argv[1]
     command = ' '.join(sys.argv[2:])
+    lock = FileLock(FIFO)
+    lock.acquire()
     with open(FIFO, 'w') as fifo:
         fifo.write(target + ':' + command)
         fifo.flush()
-	
+    lock.release()
 
 if __name__ == '__main__':
 	main()
