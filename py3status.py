@@ -253,6 +253,8 @@ class MPDCurrentSong(WorkerThread):
                 self._connect_to_mpd()
             finally:
                 self.mpd_lock.release()
+                if self.playing.is_set():
+                    self._update_data()
                 self._fill_queue()
 
     def _update_data(self):
@@ -309,7 +311,7 @@ class HDDTemp(GetTemp):
                     break
                 else:
                     self._check_temp(temp)
-    
+
 
 class GPUTemp(GetTemp):
     '''
