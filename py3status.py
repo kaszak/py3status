@@ -137,6 +137,63 @@ class GetTemp(WorkerThread):
             self.show = False
             self.urgent = False
         self._data['full_text'] = '{}: {}C'.format(self.name, temp)
+        
+        
+class Toggler(WorkerThread):
+    def __init__(self, observer,
+                 command_q, 
+                 command_off, 
+                 command_on,
+                 rexpression,
+                 trueval,
+                 **kwargs):
+        WorkerThread.__init__(self, **kwargs)
+        self.rexpression = re.compile(rexpression)
+        self.command_q = command_q.split()
+        self.command_off = command_off
+        self.command_on = command_on
+        self.commandq = Queue()
+        self.trueval = trueval
+        observer.register_command(self.name, self.commandq)
+        # Override default interval, fifo will serve as a timer/blocker
+        self.interval = 0
+        self._data['color'] = self.color_warning
+        self._data['full_text'] = self.name
+        self.show = self._is_disabled()
+        self._fill_queue()
+    
+    def _is_disabled(self):
+        xset = Popen(self.command_q, stdout=PIPE)
+        output = xset.stdout.read().decode()
+        state = self.rexpression.search(output).group('state')
+        if state == self.trueval:
+            return False
+        else:
+            return True
+            
+    def toggle(self):
+        xset = Popen(self.command_q, stdout=PIPE)
+        output = xset.stdout.read().decode()
+        dpms_state = self.rexpression.search(output).group('state')
+        if self._is_disabled():
+            self.on()
+        else:
+            self.off()
+        
+    def on(self):
+        call(self.command_on, shell=True)
+        self.show = False
+    
+    def off(self):
+        call(self.command_off, shell=True)
+        self.show = True
+    
+    def _update_data(self):
+        command = self.commandq.get().lower()
+        try:
+            getattr(self, command)()
+        except AttributeError:
+            pass
 
 
 class FIFObserver(Thread):
@@ -165,7 +222,10 @@ class FIFObserver(Thread):
             os.mkfifo(self.fullpath)
 
     def register_command(self, command, queue):
-        self._commands[command.lower()] = queue
+        if not command in self._commands:
+            self._commands[command.lower()] = queue
+        else:
+            raise KeyError('Command already registered')
 
     def run(self):
         while True:
@@ -177,7 +237,7 @@ class FIFObserver(Thread):
             try:
                 target, command = stuff.split(':')
             except ValueError:
-                #Wrong thingie, ignore it
+                # Wrong thingie, ignore it
                 pass
             else:
                 target, command = target.lower(), command.lower()
@@ -612,58 +672,27 @@ class XInfo(WorkerThread):
             self.show = False
             
         
-class DPMS(WorkerThread):
+class DPMS(Toggler):
     '''
     Recieves messages from external script, that turns DPMS on/off.
     We can assume that DPMS is always on initially.
     ''' 
-    def __init__(self, observer,
-                 command_q, 
-                 command_off, 
-                 command_on,
+    def __init__(self,
                  turn_screen_off,
                  **kwargs):
-        WorkerThread.__init__(self, **kwargs)
-        self.dpms_re = re.compile(r'DPMS is (?P<state>Enabled|Disabled)')
-        self.command_q = command_q.split()
-        self.command_off = command_off
-        self.command_on = command_on
+        Toggler.__init__(self, **kwargs)
         self.turn_screen_off = turn_screen_off
-        self.commandq = Queue()
-        observer.register_command('dpms', self.commandq)
-        # Override default interval, fifo will serve as a timer/blocker
-        self.interval = 0
-        self._data['color'] = self.color_warning
-        self._data['full_text'] = 'DPMS'
-        self.show = self._is_disabled()
-        self._fill_queue()
     
-    def _is_disabled(self):
-        xset = Popen(self.command_q, stdout=PIPE)
-        output = xset.stdout.read().decode()
-        dpms_state = self.dpms_re.search(output).group('state')
-        if dpms_state == 'Enabled':
-            return False
-        else:
-            return True
-        
-    def _update_data(self):
-        command = self.commandq.get().lower()
-        if command == 'toggle':
-            xset = Popen(self.command_q, stdout=PIPE)
-            output = xset.stdout.read().decode()
-            dpms_state = self.dpms_re.search(output).group('state')
-            if self._is_disabled():
-                call(self.command_on, shell=True)
-                self.show = False
-            else:
-                call(self.command_off, shell=True)
-                self.show = True
-        elif command == 'off':
-            call(self.turn_screen_off, shell=True)
-            # DPMS always turns on if you call this command
-            self.show = False
+    def turn_off(self):
+        call(self.turn_screen_off, shell=True)
+        # DPMS always turns on if you call this command
+        self.show = False
+            
 
+class TouchPad(Toggler):
+    def __init__(self, **kwargs):
+        Toggler.__init__(self, **kwargs)
+        
 
 class StatusBar():
     def __init__(self):
@@ -719,8 +748,7 @@ class StatusBar():
             self.comma = ','
         
     def run(self):
-        print('{"version":1}', flush=True)
-        print('[', flush=True)
+        print('{"version":1}\n[', flush=True)
         
         self._start_threads()
         self._handle_updates()
