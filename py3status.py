@@ -159,6 +159,8 @@ class Toggler(WorkerThread):
         self.interval = 0
         self._data['color'] = self.color_warning
         self._data['full_text'] = self.name
+        
+    def _show(self):
         self.show = self._is_disabled()
         self._fill_queue()
     
@@ -682,6 +684,7 @@ class DPMS(Toggler):
                  **kwargs):
         Toggler.__init__(self, **kwargs)
         self.turn_screen_off = turn_screen_off
+        self._show()
     
     def turn_off(self):
         call(self.turn_screen_off, shell=True)
@@ -692,7 +695,22 @@ class DPMS(Toggler):
 class TouchPad(Toggler):
     def __init__(self, **kwargs):
         Toggler.__init__(self, **kwargs)
-        
+        mouses = 0
+        for device in os.listdir('/dev/input'):
+            if device.startswith('mouse'):
+                mouses += 1
+        if mouses > 1:
+            self.off()
+        else:
+            self._show()
+
+    def on(self):
+        Toggler.on(self)
+        self.show = True
+    
+    def off(self):
+        Toggler.off(self)
+        self.show = False
 
 class StatusBar():
     def __init__(self):
