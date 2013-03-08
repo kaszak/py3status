@@ -30,8 +30,8 @@ import re
 import os
 
 from mpd import MPDClient, ConnectionError
-from psutil import disk_partitions, disk_usage
 from alsaaudio import Mixer, ALSAAudioError
+import psutil
 
 
 class WorkerThread(Thread):
@@ -437,7 +437,7 @@ class DiskUsage(WorkerThread):
         
     def _update_data(self):
         try:
-            usage = disk_usage(self.mountpoint)
+            usage = psutil.disk_usage(self.mountpoint)
         except OSError:
             self.show = False
             pass
@@ -719,6 +719,9 @@ class StatusBar():
         self.data = []
         self.comma = ''
         self.updates = Queue()
+        self.process = psutil.Process(os.getpid())
+        self.process.set_nice(5)
+        self.process.set_ionice(psutil.IOPRIO_CLASS_IDLE)
         
     def _start_threads(self):
         config = ConfigParser()
