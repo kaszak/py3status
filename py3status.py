@@ -28,6 +28,7 @@ from struct import pack
 from fcntl import ioctl
 import re
 import os
+import ctypes
 
 from mpd import MPDClient, ConnectionError
 from alsaaudio import Mixer, ALSAAudioError
@@ -551,30 +552,22 @@ class WirelessStatus(WorkerThread):
         WorkerThread.__init__(self, **kwargs)
         self.interface = interface
         self.length = 32 # Max ESSID length
-        self.fmt = 'PH' # Format for struct.pack(), P = void*, H=unsigned short
+        self.fmt = 'PB' # Format for struct.pack(), P = void*, B=unsigned char
         self.magic_number = 0x8B1B # Wizardry
-        # First part of the ioctl call, 16-byte string containing name 
-        # of the interface.
-        self.part_1 = bytes(self.interface.encode()) + b'\0' * (16-len(interface))
-        # Second part of the ioctl call, 32-byte empty string that will
-        # contain ESSID
-        self.part_2 = b'\x00' * self.length
         # Socket to the kernel, seems like it doesn't need recreating
         # every loop.
         self.kernel_socket = socket(type=SOCK_DGRAM)
+        self.essid = array('B', b'\0' * self.length)
+        self.address = self.essid.buffer_info()[0] # (address, self.length)
+        self.iwrequest = array('B', bytes(self.interface.encode()) + b'\0' * (16-len(interface)))
+        self.iwrequest.extend(pack(self.fmt, self.address, self.length))
         self.show = True
+        
     
     def _update_data(self):
-        # Build the call
-        iwrequest = array('B', self.part_1)
-        essid = array('B', self.part_2)
-        address = essid.buffer_info()[0] # (address, self.length)
-        iwrequest.extend(pack(self.fmt, address, self.length)) # flag is omitted
-        
         # Moment of truth
-        ioctl(self.kernel_socket.fileno(), self.magic_number, iwrequest)
-            
-        output = essid.tostring().strip(b'\x00').decode()
+        ioctl(self.kernel_socket.fileno(), self.magic_number, self.iwrequest)
+        output = self.essid.tostring().strip(b'\x00').decode()
         
         if output:
             self._data['full_text'] = output
@@ -587,6 +580,19 @@ class WirelessStatus(WorkerThread):
             self._data['short_text'] = '{} D/C'.format(self.interface)
             self._data['color'] = self.color_critical
             self.urgent = True
+        
+        # Regenerate for reuse
+        # memset essid to zeros
+        # Set length to self.length again
+        # [24], because:
+        # [0-15] array with interface name
+        # [16-23] 8-byte memory adress to self.essid
+        # [24] one-byte value with length
+        # ioctl sets length byte to the actual essid length, causes OSError
+        # if not re-set to default value
+        ctypes.memset(self.address, 0, self.iwrequest[24])
+        self.iwrequest[24] = self.length
+        
 
     
 class Volume(WorkerThread):
