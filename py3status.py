@@ -707,8 +707,7 @@ class TouchPad(Toggler):
                 mouses += 1
         if mouses > 1:
             self.off()
-        else:
-            self._show()
+        self._show()
 
     def on(self):
         Toggler.on(self)
@@ -739,8 +738,7 @@ class RadeonPowerProfile(WorkerThread):
             else:
                 self.write_profile('low')
         else:
-            with open(self.profile_file, 'w') as profile:
-                profile.write(command)
+            profile.write(command)
 
     def write_profile(self, new_profile):
          with open(self.profile_file, 'w') as profile:
