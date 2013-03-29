@@ -27,44 +27,16 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include "lock.h"
 
 #define MAX_C 200
-
-int acquire(char* lockname) 
-{
-    int descriptor;
-    if(lockname == NULL) return -1;
-    
-    // Gonna grind until file is succesfully created, which results in
-    // a lock. Necessary, because rapid execution of this gizmo can go
-    // haywire, leave zombies. Or not.
-    // usleep to not waste cpu
-    while(1){
-        descriptor = open(lockname, O_CREAT|O_EXCL|O_RDWR, S_IRWXU);
-        if(errno == EEXIST) {
-            errno = 0; // errno does not reset itself, good
-            usleep(50000); //0.05 second
-            continue;
-        }
-        else {
-            break;
-        }
-    }
-    return descriptor;
-}
-
-void release(int descriptor, char* lockname) 
-{
-    close(descriptor);
-    unlink(lockname);
-}
     
 int main(int argc, char **argv)
 {
-    int descriptor, i;
+    int i;
     char command[MAX_C] = "\0"; // strcat sometimes resulted with
     char filename[MAX_C] = "\0";// garbage without this initialization.
-    char lockname[MAX_C] = "\0";
+    char lockname[MAX_C] = "\0";// static declaration would work as well.
     FILE* fp;
     
     // Construct path
@@ -88,16 +60,13 @@ int main(int argc, char **argv)
         strcat(command, " ");
     }
     // lock the file
-	descriptor = acquire(lockname);
-    if(descriptor == -1) exit(1);
-    
-    fp = fopen(filename, "w");
-    if(fp == NULL) exit(1);
+    if(acquire(lockname) == -1) exit(1);
+
+    if((fp = fopen(filename, "w")) == NULL) exit(1);
     fprintf(fp, "%s", command);
     fclose(fp);
     
     // remove the .lock file and bail out
-    release(descriptor, lockname);
-	return 0;
+    release(lockname);
+    return 0;
 }
-
