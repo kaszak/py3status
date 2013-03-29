@@ -67,6 +67,6 @@ int main(int argc, char **argv)
     fclose(fp);
     
     // remove the .lock file and bail out
-    release(lockname);
+    release();
     return 0;
 }

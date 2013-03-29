@@ -30,11 +30,15 @@
 #include <stdlib.h>
 #include "lock.h"
 
+#define MAX_C 200
+
 static int descriptor;
+static char lock[MAX_C] = "\0";
 
 int acquire(char* lockname) 
 {
     if(lockname == NULL) return -1;
+    strcat(lock, lockname);
     
     // Gonna grind until file is succesfully created, which results in
     // a lock. Necessary, because rapid execution of this gizmo can go
@@ -42,7 +46,7 @@ int acquire(char* lockname)
     // usleep to not waste cpu
     while(1)
     {
-        descriptor = open(lockname, O_CREAT|O_EXCL|O_RDWR, S_IRWXU);
+        descriptor = open(lock, O_CREAT|O_EXCL|O_RDWR, S_IRWXU);
         if(errno == EEXIST) 
         {
             errno = 0; // errno does not reset itself, good
@@ -59,11 +63,11 @@ int acquire(char* lockname)
     return 0;
 }
 
-void release(char* lockname) 
+void release(void) 
 {
-    if(descriptor != 1) 
+    if((descriptor != 1) && (strlen(lock) > 0)) 
     {
         close(descriptor);
-        unlink(lockname);
+        unlink(lock);
     }
 }

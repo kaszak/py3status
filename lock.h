@@ -2,6 +2,6 @@
 #define LOCK_H
 
 int acquire(char* lockname);
-void release(char* lockname);
+void release(void);
 
 #endif
