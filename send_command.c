@@ -28,8 +28,9 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include "lock.h"
+#include "config.h"
 
-#define MAX_C 200
+/* Tool to pass comands trough FIFO pipe. */
     
 int main(int argc, char **argv)
 {
@@ -42,7 +43,7 @@ int main(int argc, char **argv)
     // Construct path
     strcat(filename, "/tmp/");
     strcat(filename, getenv("USER"));
-    strcat(filename, "/py3status.fifo");
+    strcat(filename, FILENAME);
     
     // Ditto, for .lock file
     strcat(lockname, filename);
@@ -63,7 +64,7 @@ int main(int argc, char **argv)
     if(acquire(lockname) == -1) exit(1);
 
     if((fp = fopen(filename, "w")) == NULL) exit(1);
-    fprintf(fp, "%s", command);
+    fputs(command, fp);
     fclose(fp);
     
     // remove the .lock file and bail out

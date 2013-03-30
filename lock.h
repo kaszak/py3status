@@ -1,7 +1,5 @@
-#ifndef LOCK_H
-#define LOCK_H
+#pragma once
 
 int acquire(char* lockname);
 void release(void);
 
-#endif

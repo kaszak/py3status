@@ -29,15 +29,15 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include "lock.h"
-
-#define MAX_C 200
+#include "config.h"
 
 static int descriptor;
 static char lock[MAX_C] = "\0";
 
 int acquire(char* lockname) 
 {
-    if(lockname == NULL) return -1;
+    // Blow up if lockname string is empty or lock has already been acquired
+    if(lockname == NULL && strlen(lock) != 0 && descriptor != 0) return -1;
     strcat(lock, lockname);
     
     // Gonna grind until file is succesfully created, which results in
@@ -50,7 +50,7 @@ int acquire(char* lockname)
         if(errno == EEXIST) 
         {
             errno = 0; // errno does not reset itself, good
-            usleep(50000); //0.05 second
+            usleep(DELAY);
             continue;
         }
         else 
@@ -65,9 +65,14 @@ int acquire(char* lockname)
 
 void release(void) 
 {
-    if((descriptor != 1) && (strlen(lock) > 0)) 
+    // do nothing if there is no acquired lock
+    // maybe it should signal it somehow
+    printf("%d\n", descriptor);
+    if((descriptor != -1) && (strlen(lock) > 0)) 
     {
         close(descriptor);
         unlink(lock);
+        descriptor = 0;
+        lock[0] = '\0';
     }
 }
