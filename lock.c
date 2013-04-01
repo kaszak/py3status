@@ -31,14 +31,14 @@
 #include "lock.h"
 #include "config.h"
 
-static int descriptor;
-static char lock[MAX_C] = "\0";
-
-int acquire(char* lockname) 
+Lock* acquire(char* lockname) 
 {
-    // Blow up if lockname string is empty or lock has already been acquired
-    if(lockname == NULL && strlen(lock) != 0 && descriptor != 0) return -1;
-    strcat(lock, lockname);
+    Lock *new_lock;
+    // Blow up if lockname string is empty
+    if(lockname == NULL) return NULL;
+    new_lock = (Lock*)malloc(sizeof(Lock));
+    new_lock->lockpath[0] = '\0';
+    strcat(new_lock->lockpath, lockname);
     
     // Gonna grind until file is succesfully created, which results in
     // a lock. Necessary, because rapid execution of this gizmo can go
@@ -46,7 +46,7 @@ int acquire(char* lockname)
     // usleep to not waste cpu
     while(1)
     {
-        descriptor = open(lock, O_CREAT|O_EXCL|O_RDWR, S_IRWXU);
+        new_lock->descriptor = open(new_lock->lockpath, O_CREAT|O_EXCL|O_RDWR, S_IRWXU);
         if(errno == EEXIST) 
         {
             errno = 0; // errno does not reset itself, good
@@ -57,22 +57,20 @@ int acquire(char* lockname)
         {
             if(!errno)
                 break;
-            else return -1; //something blew up
+            else return NULL; //something blew up
         } 
     }
-    return 0;
+    return new_lock;
 }
 
-void release(void) 
+void release(Lock* lock) 
 {
     // do nothing if there is no acquired lock
     // maybe it should signal it somehow
-    printf("%d\n", descriptor);
-    if((descriptor != -1) && (strlen(lock) > 0)) 
+    if((lock != NULL) && (lock->descriptor != -1) && (strlen(lock->lockpath) > 0)) 
     {
-        close(descriptor);
-        unlink(lock);
-        descriptor = 0;
-        lock[0] = '\0';
+        close(lock->descriptor);
+        unlink(lock->lockpath);
+        free(lock);
     }
 }

@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <limits.h>
 #include "lock.h"
 #include "config.h"
 
@@ -36,9 +37,10 @@ int main(int argc, char **argv)
 {
     int i;
     char command[MAX_C] = "\0"; // strcat sometimes resulted with
-    char filename[MAX_C] = "\0";// garbage without this initialization.
-    char lockname[MAX_C] = "\0";// static declaration would work as well.
+    char filename[PATH_MAX] = "\0";// garbage without this initialization.
+    char lockname[PATH_MAX] = "\0";// static declaration would work as well.
     FILE* fp;
+    Lock* lock;
     
     // Construct path
     strcat(filename, "/tmp/");
@@ -61,13 +63,13 @@ int main(int argc, char **argv)
         strcat(command, " ");
     }
     // lock the file
-    if(acquire(lockname) == -1) exit(1);
+    if((lock = acquire(lockname)) == NULL) exit(1);
 
     if((fp = fopen(filename, "w")) == NULL) exit(1);
     fputs(command, fp);
     fclose(fp);
     
     // remove the .lock file and bail out
-    release();
+    release(lock);
     return 0;
 }
