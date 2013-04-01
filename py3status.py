@@ -63,7 +63,6 @@ class WorkerThread(Thread):
 
         # Template for self._data, mangled by get_output()
         self._data = {'full_text': '',
-                      'short_text': '',
                       'color': self.color_normal
                       }
 
@@ -97,8 +96,6 @@ class WorkerThread(Thread):
                   }
         if self._data['color']:
             output['color'] = self._data['color']
-        if self._data['short_text']:
-            output['short_text'] = self._data['short_text']
         if self.urgent:
             output['urgent'] = self.urgent
         return output
@@ -340,7 +337,6 @@ class MPDCurrentSong(WorkerThread):
                 else:
                     mpd_title = 'Unknown Title'
                 self._data['full_text'] = mpd_artist + ' - ' + mpd_title
-                self._data['short_text'] = mpd_title
         except (ConnectionError, ConnectionRefusedError):
             self._connect_to_mpd()
         finally:
@@ -449,10 +445,6 @@ class DiskUsage(WorkerThread):
                     self.mountpoint, 
                     usage.percent,
                     self.human_size(usage.free))
-                # Last directory in mount point instead of full path
-                self._data['short_text'] = '{}: {}%'.format(
-                    self.mountpoint.split('/')[-1], 
-                    usage.percent)
                 self._data['color'] = self.color_warning
                 self.show = True
             else:
@@ -483,7 +475,6 @@ class Date(WorkerThread):
     
     def _update_data(self):
         self._data['full_text'] = strftime('%d-%m-%Y %H:%M')
-        self._data['short_text'] = strftime('%H:%M')
 
     
 class BatteryStatus(WorkerThread):
@@ -519,7 +510,6 @@ class BatteryStatus(WorkerThread):
             self.show = False
             
         elif (status =='Charging') or (status == 'Discharging'):
-            status_s = status[0]
             with open(self.battery_file_full) as bat_f:
                 full = int(bat_f.read().strip())
         
@@ -534,8 +524,6 @@ class BatteryStatus(WorkerThread):
                 self.urgent = False
                 self._data['color'] = self.color_normal
             self._data['full_text'] = '{} {:.0f}%'.format(status, 
-                percentage)
-            self._data['short_text'] = '{} {:.0f}%'.format(status_s, 
                 percentage)
             self.show = True
         
@@ -571,13 +559,11 @@ class WirelessStatus(WorkerThread):
         
         if output:
             self._data['full_text'] = output
-            self._data['short_text'] = output
             self._data['color'] = self.color_normal
             self.urgent = False
         else:
             self._data['full_text'] = '{} disconnected'.format(
                 self.interface)
-            self._data['short_text'] = '{} D/C'.format(self.interface)
             self._data['color'] = self.color_critical
             self.urgent = True
         

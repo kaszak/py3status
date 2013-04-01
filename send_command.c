@@ -34,40 +34,42 @@
 /* Tool to pass comands trough FIFO pipe. */
     
 int main(int argc, char **argv)
-{
-    int i;
-    char command[MAX_C] = "\0"; // strcat sometimes resulted with
-    char filename[PATH_MAX] = "\0";// garbage without this initialization.
-    char lockname[PATH_MAX] = "\0";// static declaration would work as well.
+{   
+    int len;                   
+    char* filename;
+    char* lockname;
     FILE* fp;
     Lock* lock;
     
+    filename = (char*)calloc((len = strlen(TMPDIR) + strlen(getenv("USER")) + strlen(FILENAME) + 1), sizeof(char));
+    lockname = (char*)calloc(len + strlen(LOCK_SUFFIX), sizeof(char));
+    
     // Construct path
-    strcat(filename, "/tmp/");
+    strcat(filename, TMPDIR);
     strcat(filename, getenv("USER"));
     strcat(filename, FILENAME);
     
     // Ditto, for .lock file
     strcat(lockname, filename);
-    strcat(lockname, ".lock");
+    strcat(lockname, LOCK_SUFFIX);
     
     // send_command TARGET COMMAND
     if(argc < 3) exit(1);
     
-    // Build command
-    // looks like TARGET:COMMAND
-    strcat(command, argv[1]);
-    strcat(command, ":");
-    for(i = 2; i < argc;i++) {
-        strcat(command, argv[i]);
-        strcat(command, " ");
-    }
     // lock the file
     if((lock = acquire(lockname)) == NULL) exit(1);
 
-    if((fp = fopen(filename, "w")) == NULL) exit(1);
-    fputs(command, fp);
+    if((fp = fopen(filename, "w")) == NULL) 
+    {
+        release(lock);
+        exit(1);
+    }
+
+    fprintf(fp, "%s:%s", argv[1], argv[2]);
+
     fclose(fp);
+    free(filename);
+    free(lockname);
     
     // remove the .lock file and bail out
     release(lock);

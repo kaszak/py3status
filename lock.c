@@ -35,7 +35,7 @@ Lock* acquire(char* lockname)
 {
     Lock *new_lock;
     // Blow up if lockname string is empty
-    if(lockname == NULL) return NULL;
+    if((lockname == NULL) || strlen(lockname) < 1) return NULL;
     new_lock = (Lock*)malloc(sizeof(Lock));
     new_lock->lockpath[0] = '\0';
     strcat(new_lock->lockpath, lockname);
