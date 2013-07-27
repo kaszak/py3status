@@ -1,11 +1,12 @@
 CC=gcc
 OBJS=lock.o send_command.o
-CFLAGS=-Wall -O2
+PROG=send_command
+CFLAGS=-Wall -Os
 .PHONY= all clean clean_all
 
-all: send_command
+all: $(PROG)
 
-send_command: $(OBJS)
+$(PROG): $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) -o $@
 	
 $(OBJS): %.o: %.c
@@ -15,4 +16,4 @@ clean:
 	rm $(OBJS)
 
 clean_all: clean
-	rm send_command
+	rm $(PROG)

@@ -38,15 +38,16 @@ int main(int argc, char **argv)
     int len;                   
     char* filename;
     char* lockname;
+    char* username;
     FILE* fp;
     Lock* lock;
     
-    filename = (char*)calloc((len = strlen(TMPDIR) + strlen(getenv("USER")) + strlen(FILENAME) + 1), sizeof(char));
+    filename = (char*)calloc((len = strlen(TMPDIR) + strlen(username = getenv("USER")) + strlen(FILENAME) + 1), sizeof(char));
     lockname = (char*)calloc(len + strlen(LOCK_SUFFIX), sizeof(char));
     
     // Construct path
     strcat(filename, TMPDIR);
-    strcat(filename, getenv("USER"));
+    strcat(filename, username);
     strcat(filename, FILENAME);
     
     // Ditto, for .lock file

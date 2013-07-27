@@ -330,13 +330,19 @@ class MPDCurrentSong(WorkerThread):
                 if 'artist' in song:
                     mpd_artist = song['artist']
                 else:
-                    mpd_artist = 'Unknown Artist'
+                    mpd_artist = ''
 
                 if 'title' in song:
                     mpd_title = song['title']
                 else:
-                    mpd_title = 'Unknown Title'
-                self._data['full_text'] = mpd_artist + ' - ' + mpd_title
+                    mpd_title = ''
+                if mpd_artist and mpd_title:
+                    self._data['full_text'] = mpd_artist + ' - ' + mpd_title
+                else:
+                    if not mpd_artist and not mpd_title:
+                        self._data['full_text'] = 'Unknown'
+                    else:
+                        self._data['full_text'] = mpd_artist + mpd_title # one is empty, so it doesn't matter
         except (ConnectionError, ConnectionRefusedError):
             self._connect_to_mpd()
         finally:
@@ -583,7 +589,7 @@ class WirelessStatus(WorkerThread):
     
 class Volume(WorkerThread):
     '''
-    Monitor volume of the given channel usilg alssaudio python 
+    Monitor volume of the given channel using alssaudio python 
     library.
     '''
     def __init__(self, 
@@ -693,7 +699,14 @@ class TouchPad(Toggler):
                 mouses += 1
         if mouses > 1:
             self.off()
-        self._show()
+            self.show = False
+        else:
+            self.on()
+            self.show = True
+        self._fill_queue()
+        
+    def _is_disabled(self):
+        return not Toggler._is_disabled(self)
 
     def on(self):
         Toggler.on(self)

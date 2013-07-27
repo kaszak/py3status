@@ -1,6 +1,8 @@
 #pragma once
 #include <limits.h>
 
+#define DELAY 50000 //0.05 second
+
 typedef struct Lock 
 {
     int descriptor;
