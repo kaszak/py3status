@@ -321,32 +321,35 @@ class MPDCurrentSong(WorkerThread):
         '''
         Updates self._data to a string in a format "Artist - Song"
         '''
-
-        self.playing.wait()
-        self.mpd_lock.acquire()
-        try:
+        # If mpd has been stopped from outside of this script, this should catch it.
+        # Would be nice if it also catched starting mpd from the outside source, but i don't need it atm.
+        if self.is_stopped():
+            self._pausing()
+        else:
+            self.playing.wait()
+            self.mpd_lock.acquire()
+            try:
                 song = self.mpd_client.currentsong()
-
+        
                 if 'artist' in song:
                     mpd_artist = song['artist']
                 else:
                     mpd_artist = ''
-
+        
                 if 'title' in song:
                     mpd_title = song['title']
                 else:
                     mpd_title = ''
                 if mpd_artist and mpd_title:
                     self._data['full_text'] = mpd_artist + ' - ' + mpd_title
+                elif not mpd_artist and not mpd_title:
+                    self._data['full_text'] = 'Unknown'
                 else:
-                    if not mpd_artist and not mpd_title:
-                        self._data['full_text'] = 'Unknown'
-                    else:
-                        self._data['full_text'] = mpd_artist + mpd_title # one is empty, so it doesn't matter
-        except (ConnectionError, ConnectionRefusedError):
-            self._connect_to_mpd()
-        finally:
-            self.mpd_lock.release()
+                    self._data['full_text'] = mpd_artist + mpd_title # one is empty, so it doesn't matter
+            except (ConnectionError, ConnectionRefusedError):
+                self._connect_to_mpd()
+            finally:
+                self.mpd_lock.release()
 
 
 class HDDTemp(GetTemp):
