@@ -16,7 +16,7 @@
 #
 
 from json import dumps
-from subprocess import Popen, call, PIPE
+from subprocess import Popen, call, PIPE, call, check_output
 from socket import socket, SOCK_DGRAM
 from threading import Thread, Event, Lock
 from queue import Queue
@@ -29,9 +29,9 @@ from fcntl import ioctl
 import re
 import os
 import ctypes
+import sys
 
 from mpd import MPDClient, ConnectionError
-from alsaaudio import Mixer, ALSAAudioError
 import psutil
 
 
@@ -107,6 +107,16 @@ class WorkerThread(Thread):
             self._fill_queue()
             sleep(self.interval)
 
+class DebugStdin(WorkerThread):
+    '''
+    click_events explaination in the protocol was unclear, wrote this to test them.
+    '''
+    def __init__(self, **kwargs):
+        WorkerThread.__init__(self, **kwargs)
+        self.show = True
+        
+    def _update_data(self):
+        self._data["full_text"] = sys.stdin.readline()
 
 class GetTemp(WorkerThread):
     '''
@@ -259,7 +269,6 @@ class MPDCurrentSong(WorkerThread):
         self._connect_to_mpd()
         self.commandq = Queue()
         observer.register_command('mpd', self.commandq)
-        self.playing = Event()
         self.mpd_lock = Lock()
         wait_for_commands = Thread(target=self._command_mangler, daemon=True)
         wait_for_commands.start()
@@ -273,19 +282,20 @@ class MPDCurrentSong(WorkerThread):
             pass
 
     def is_stopped(self):
-        if (self.mpd_client.status()['state'] == 'stop' or
-                self.mpd_client.status()['state'] == 'pause'):
+        status = self.mpd_client.status()
+        if (status['state'] == 'stop' or
+                status['state'] == 'pause'):
             return True
         else:
             return False
 
     def _playing(self):
-        self.show = True
-        self.playing.set()
+        if not self.show:
+            self.show = True
 
     def _pausing(self):
-        self.playing.clear()
-        self.show = False
+        if self.show:
+            self.show = False
 
     def _command_mangler(self):
         while True:
@@ -313,7 +323,7 @@ class MPDCurrentSong(WorkerThread):
                 self._connect_to_mpd()
             finally:
                 self.mpd_lock.release()
-                if self.playing.is_set():
+                if not self.is_stopped():
                     self._update_data()
                 self._fill_queue()
 
@@ -322,11 +332,10 @@ class MPDCurrentSong(WorkerThread):
         Updates self._data to a string in a format "Artist - Song"
         '''
         # If mpd has been stopped from outside of this script, this should catch it.
-        # Would be nice if it also catched starting mpd from the outside source, but i don't need it atm.
         if self.is_stopped():
             self._pausing()
         else:
-            self.playing.wait()
+            self._playing()
             self.mpd_lock.acquire()
             try:
                 song = self.mpd_client.currentsong()
@@ -589,16 +598,18 @@ class WirelessStatus(WorkerThread):
         self.iwrequest[24] = self.length
         
 
+
     
 class Volume(WorkerThread):
     '''
-    Monitor volume of the given channel using alssaudio python 
-    library.
+    Monitor volume of the given channel using amixer.
+    Probably going to make it more generic, TODO.
     '''
     def __init__(self, 
                  channel,
                  mixer_id, 
-                 card_index, 
+                 card_index,
+                 step,
                  observer,
                  **kwargs):
         WorkerThread.__init__(self, **kwargs)
@@ -608,40 +619,66 @@ class Volume(WorkerThread):
         self.commandq = Queue()
         observer.register_command('alsa', self.commandq)
         self.interval = 0
-        self.amixer = Mixer(control=self.channel, 
-                            id=self.mixer_id,
-                            cardindex=self.card_index)
+        self.step = int(step)
+        self.getvolre = re.compile(r'\[(?P<volume>[0-9]*)%\]')
+        self.getmutere = re.compile(r'\[(?P<mute>on|off)\]')
+                            
         self._update_volume()
         self.show = True
         self._fill_queue()
         
-    def _sanitize_volume(self, volume):
+    def return_amixer_output(self):
+        return check_output('amixer sget {} -M'.format(self.channel).split(), universal_newlines=True)
+        
+    def getvolume(self):
+        return int(self.getvolre.search(self.return_amixer_output()).group('volume'))
+    
+    def getmute(self):
+        state = self.getmutere.search(self.return_amixer_output()).group('mute')
+        if state == 'on':
+            return False # Not muted
+        elif state =='off':
+            return True
+        
+    def setvolume(self, volume):
         if volume > 100:
             volume = 100
         elif volume < 0:
             volume = 0
-        return volume
+            
+        call('amixer sset {} {}% -M -q'.format(self.channel, volume).split())
+        
+    def togmute(self):
+        if self.getmute():
+            action = 'mute'
+        else:
+            action = 'unmute'
+        
+        call('amixer sset {} {} -q'.format(self.channel, action))
+        
         
     def _update_data(self):
         command = self.commandq.get()
-        if command == 'up':
-            new_volume = self._sanitize_volume(self.amixer.getvolume()[0] + 5)
-            self.amixer.setvolume(new_volume)
-        elif command == 'down':
-            new_volume = self._sanitize_volume(self.amixer.getvolume()[0] - 5)
-            self.amixer.setvolume(new_volume)
+        if command == 'up' or command == 'down':
+            volume = self.getvolume()
+            if command == 'up':
+                new_volume = volume + self.step
+            
+            elif command == 'down':
+                new_volume = volume - self.step
+            
+            self.setvolume(new_volume)
+        
         elif command == 'mute':
-            if not self.amixer.getmute()[0]:
-                self.amixer.setmute(1)
-            else: 
-                self.amixer.setmute(0)
+            self.togmute()
+        
         self._update_volume()
             
     def _update_volume(self):
-        muted = self.amixer.getmute()
-        volume = self.amixer.getvolume()
-        self._data['full_text'] = '♪:{:3d}%'.format(volume[0])
-        if muted[0]:
+        muted = self.getmute()
+        volume = self.getvolume()
+        self._data['full_text'] = '♪:{:3d}%'.format(volume)
+        if muted:
             self._data['color'] = self.color_critical
         else:
             self._data['color'] = self.color_normal
@@ -816,7 +853,7 @@ class StatusBar():
             self.comma = ','
         
     def run(self):
-        print('{"version":1}\n[', flush=True)
+        print('{"version":1, "click_events": true }\n[', flush=True)
         
         self._start_threads()
         self._handle_updates()
