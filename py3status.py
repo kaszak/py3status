@@ -633,7 +633,7 @@ class Volume(WorkerThread):
     def getvolume(self):
         return int(self.getvolre.search(self.return_amixer_output()).group('volume'))
     
-    def getmute(self):
+    def is_muted(self):
         state = self.getmutere.search(self.return_amixer_output()).group('mute')
         if state == 'on':
             return False # Not muted
@@ -649,12 +649,12 @@ class Volume(WorkerThread):
         call('amixer sset {} {}% -M -q'.format(self.channel, volume).split())
         
     def togmute(self):
-        if self.getmute():
-            action = 'mute'
-        else:
+        if self.is_muted():
             action = 'unmute'
+        else:
+            action = 'mute'
         
-        call('amixer sset {} {} -q'.format(self.channel, action))
+        call('amixer sset {} {} -q'.format(self.channel, action).split())
         
         
     def _update_data(self):
@@ -675,7 +675,7 @@ class Volume(WorkerThread):
         self._update_volume()
             
     def _update_volume(self):
-        muted = self.getmute()
+        muted = self.is_muted()
         volume = self.getvolume()
         self._data['full_text'] = '♪:{:3d}%'.format(volume)
         if muted:
