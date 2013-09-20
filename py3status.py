@@ -15,8 +15,8 @@
 #  MA 02110-1301, USA.
 #
 
-from json import dumps
-from subprocess import Popen, call, PIPE, call, check_output
+import json
+from subprocess import Popen, call, PIPE, call, check_output, DEVNULL
 from socket import socket, SOCK_DGRAM
 from threading import Thread, Event, Lock
 from queue import Queue
@@ -30,6 +30,7 @@ import re
 import os
 import ctypes
 import sys
+import pickle
 
 from mpd import MPDClient, ConnectionError
 import psutil
@@ -107,16 +108,35 @@ class WorkerThread(Thread):
             self._fill_queue()
             sleep(self.interval)
 
-class DebugStdin(WorkerThread):
+class ClickEventHandler(Thread):
     '''
-    click_events explaination in the protocol was unclear, wrote this to test them.
+    Handle Click events.
     '''
     def __init__(self, **kwargs):
-        WorkerThread.__init__(self, **kwargs)
-        self.show = True
+        Thread.__init__(self, **kwargs)
+        self.daemon = True
+        self.calendar_name = 'gsimplecal'
+        self.event_name = 'Date'
+        self.calendar = None
         
-    def _update_data(self):
-        self._data["full_text"] = sys.stdin.readline()
+    def run(self):
+        for event in sys.stdin:
+            if event.startswith('['):
+                continue
+            elif event.startswith(','):
+                event = event.lstrip(',')
+            
+            name = json.loads(event)['name']
+            
+            if name == self.event_name:
+                if self.calendar == None:
+                    self.calendar = Popen(self.calendar_name, stdout=DEVNULL)
+                else:
+                    self.calendar.terminate()
+                    self.calendar = None
+            else:
+                pass
+
 
 class GetTemp(WorkerThread):
     '''
@@ -816,7 +836,9 @@ class StatusBar():
                     ])
         
         self.observer = FIFObserver()
+        self.clickeventhandler = ClickEventHandler()
         self.observer.start()
+        self.clickeventhandler.start()
         
         order = config['DEFAULT'].pop('order').split()
 
@@ -836,6 +858,8 @@ class StatusBar():
             self.threads.append(globals()[class_type](**arguments))
             self.data.append(None)
             self.threads[i].start()
+            
+            
     
     def _handle_updates(self):
         while self.updates:
@@ -849,7 +873,7 @@ class StatusBar():
     def _print_data(self):
         items = [item for item in self.data if item]
         if items:
-            print(self.comma, dumps(items), flush=True, sep='')
+            print(self.comma, json.dumps(items), flush=True, sep='')
             self.comma = ','
         
     def run(self):
