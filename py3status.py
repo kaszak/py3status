@@ -130,12 +130,22 @@ class ClickEventHandler(Thread):
             
             if name == self.event_name:
                 if self.calendar == None:
-                    self.calendar = Popen(self.calendar_name, stdout=DEVNULL)
+                    self.on()
                 else:
-                    self.calendar.terminate()
-                    self.calendar = None
+                    if self.calendar.poll() == None:
+                        self.off()
+                    else:
+                        self.on() #calendar killed outside
             else:
                 pass
+    
+    def on(self):
+        self.calendar = Popen(self.calendar_name, stdout=DEVNULL)
+    
+    def off(self):
+        self.calendar.terminate()
+        self.calendar = None
+
 
 
 class GetTemp(WorkerThread):
