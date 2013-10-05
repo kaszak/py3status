@@ -31,6 +31,7 @@ import os
 import ctypes
 import sys
 import pickle
+import signal
 
 from mpd import MPDClient, ConnectionError
 import psutil
@@ -48,6 +49,8 @@ class WorkerThread(Thread):
                  color_critical,
                  color_warning,
                  color_normal,
+                 separator,
+                 separator_block_width,
                  **kwargs):
         Thread.__init__(self, **kwargs)
         self.daemon = True  # kill threads when StatusBar exits
@@ -61,10 +64,16 @@ class WorkerThread(Thread):
         self.color_critical = color_critical
         self.color_normal = color_normal
         self.queue = queue
+        self.separator = bool(int(separator))
+        self.separator_block_width = int(separator_block_width)
+        self.active = Event()
+        self.active.set()
 
         # Template for self._data, mangled by get_output()
         self._data = {'full_text': '',
-                      'color': self.color_normal
+                      'color': self.color_normal,
+                      'separator': self.separator,
+                      'separator_block_width': self.separator_block_width
                       }
 
         # prevoius value of _data, for comparision
@@ -94,6 +103,8 @@ class WorkerThread(Thread):
         '''
         output = {'full_text': self._data['full_text'],
                   'name': self.name,
+                  'separator': self._data['separator'],
+                  'separator_block_width': self._data['separator_block_width']
                   }
         if self._data['color']:
             output['color'] = self._data['color']
@@ -101,9 +112,16 @@ class WorkerThread(Thread):
             output['urgent'] = self.urgent
         return output
 
+    def pause(self):
+        self.active.clear()
+        
+    def unpause(self):
+        self.active.set()
+    
     def run(self):
         '''Main worker loop.'''
         while True:
+            self.active.wait()
             self._update_data()
             self._fill_queue()
             sleep(self.interval)
@@ -517,12 +535,13 @@ class DiskUsage(WorkerThread):
             
 class Date(WorkerThread):
     '''Shows date and time, nothing to see here.'''
-    def __init__(self, **kwargs):
+    def __init__(self, representation, **kwargs):
         WorkerThread.__init__(self, **kwargs)
-        self.show=True
+        self.show = True
+        self.representation = representation
     
     def _update_data(self):
-        self._data['full_text'] = strftime('%d-%m-%Y %H:%M')
+        self._data['full_text'] = strftime(self.representation)
 
     
 class BatteryStatus(WorkerThread):
@@ -837,6 +856,13 @@ class StatusBar():
         self.process.set_nice(5)
         self.process.set_ionice(psutil.IOPRIO_CLASS_IDLE)
         
+    def _sig_handler(self, sig):
+        for thread in self.threads:
+            if sig == signal.SIGUSR1:
+                thread.pause()
+            elif sig == signal.SIGUSR2:
+                thread.unpause()
+        
     def _start_threads(self):
         config = ConfigParser()
         config.read([expanduser('~/.py3status.conf'),
@@ -869,7 +895,6 @@ class StatusBar():
             self.data.append(None)
             self.threads[i].start()
             
-            
     
     def _handle_updates(self):
         while self.updates:
@@ -887,11 +912,16 @@ class StatusBar():
             self.comma = ','
         
     def run(self):
-        print('{"version":1, "click_events": true }\n[', flush=True)
+        print('{"version":1, "click_events": true, "stop_signal": 10, "cont_signal": 12 }\n[', flush=True)
         
         self._start_threads()
         self._handle_updates()
+        self._register_signals()
+        
+
                 
 if __name__ == '__main__':
     statusbar = StatusBar()
+    signal.signal(signal.SIGUSR1, lambda x,y: statusbar._sig_handler(x))
+    signal.signal(signal.SIGUSR2, lambda x,y: statusbar._sig_handler(x))
     statusbar.run()
