@@ -68,6 +68,7 @@ class WorkerThread(Thread):
         self.separator_block_width = int(separator_block_width)
         self.active = Event()
         self.active.set()
+        self.pausable = True
 
         # Template for self._data, mangled by get_output()
         self._data = {'full_text': '',
@@ -113,7 +114,8 @@ class WorkerThread(Thread):
         return output
 
     def pause(self):
-        self.active.clear()
+        if self.pausable:
+            self.active.clear()
         
     def unpause(self):
         self.active.set()
@@ -215,6 +217,7 @@ class Toggler(WorkerThread):
         self.interval = 0
         self._data['color'] = self.color_warning
         self._data['full_text'] = self.name
+        self.pausable = False #Key events should work regardless of i3bar's state
         
     def _show(self):
         self.show = self._is_disabled()
@@ -320,6 +323,7 @@ class MPDCurrentSong(WorkerThread):
         self.mpd_lock = Lock()
         wait_for_commands = Thread(target=self._command_mangler, daemon=True)
         wait_for_commands.start()
+        self.pausable = False
         if not self.is_stopped():
             self._playing()
 
@@ -671,7 +675,7 @@ class Volume(WorkerThread):
         self.step = int(step)
         self.getvolre = re.compile(r'\[(?P<volume>[0-9]*)%\]')
         self.getmutere = re.compile(r'\[(?P<mute>on|off)\]')
-                            
+        self.pausable = False                    
         self._update_volume()
         self.show = True
         self._fill_queue()
