@@ -64,7 +64,7 @@ class WorkerThread(Thread):
         self.color_critical = color_critical
         self.color_normal = color_normal
         self.queue = queue
-        self.separator = bool(int(separator))
+        self.separator = separator
         self.separator_block_width = int(separator_block_width)
         self.active = Event()
         self.active.set()
@@ -877,6 +877,8 @@ class StatusBar():
         self.clickeventhandler.start()
         
         order = config['DEFAULT'].pop('order').split()
+        separator = config['DEFAULT'].getboolean('separator')
+        config['DEFAULT'].pop('separator')
 
         # Initialize threads and start them.
         # While at it, populate data list
@@ -889,6 +891,7 @@ class StatusBar():
                 config[entry].pop('observer')
                 arguments['observer'] = self.observer
             class_type = config[entry].pop('class_type')
+            arguments['separator'] = separator
             # Trick for merging two dictionaries
             arguments = dict(list(arguments.items()) + list(config[entry].items()))
             self.threads.append(globals()[class_type](**arguments))
@@ -922,6 +925,7 @@ class StatusBar():
                 
 if __name__ == '__main__':
     statusbar = StatusBar()
-    signal.signal(signal.SIGUSR1, lambda x,y: statusbar._sig_handler(x))
-    signal.signal(signal.SIGUSR2, lambda x,y: statusbar._sig_handler(x))
+    handler = lambda sig, frame: statusbar._sig_handler(sig)
+    signal.signal(signal.SIGUSR1, handler)
+    signal.signal(signal.SIGUSR2, handler)
     statusbar.run()
