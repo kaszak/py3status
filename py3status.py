@@ -813,46 +813,7 @@ class TouchPad(Toggler):
     def off(self):
         Toggler.off(self)
         self.show = False
-        
-class RadeonPowerProfile(WorkerThread):
-    def __init__(self, observer, profile_file, **kwargs):
-        WorkerThread.__init__(self, **kwargs)
-        self.profile_file = profile_file
-        self.commandq = Queue()
-        observer.register_command(self.name, self.commandq)
-        self.interval = 0
-        self._data['color'] = self.color_warning
-        self.if_show(self.get_profile())
-        self._fill_queue()
-        
-        
-    def _update_data(self):
-        command = self.commandq.get()
-        if command == 'toggle':
-            current = self.get_profile()
-            if current == 'low' or current == 'mid':
-                self.write_profile('high')
-            else:
-                self.write_profile('low')
-        else:
-            profile.write(command)
 
-    def write_profile(self, new_profile):
-         with open(self.profile_file, 'w') as profile:
-            profile.write(new_profile)
-         self.if_show(new_profile)
-    
-    def get_profile(self):
-        with open(self.profile_file) as profile:
-            current = profile.readline().strip()
-        return current
-    
-    def if_show(self, profile):
-        if profile == 'high' or profile == 'auto':
-            self.show = True
-            self._data['full_text'] = self.name + ' ' + profile
-        else:
-            self.show = False
     
 class StatusBar():
     def __init__(self):
