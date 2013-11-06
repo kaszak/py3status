@@ -113,6 +113,12 @@ class WorkerThread(Thread):
             output['urgent'] = self.urgent
         return output
 
+    def handle(self, sig):
+        if sig == signal.SIGUSR1:
+            self.pause()
+        elif sig == signal.SIGUSR2:
+            self.unpause()
+    
     def pause(self):
         if self.pausable:
             self.active.clear()
@@ -323,7 +329,6 @@ class MPDCurrentSong(WorkerThread):
         self.mpd_lock = Lock()
         wait_for_commands = Thread(target=self._command_mangler, daemon=True)
         wait_for_commands.start()
-        self.pausable = False
         if not self.is_stopped():
             self._playing()
 
@@ -859,13 +864,16 @@ class StatusBar():
         self.process = psutil.Process(os.getpid())
         self.process.set_nice(5)
         self.process.set_ionice(psutil.IOPRIO_CLASS_IDLE)
-        
+        self.active = True
+
     def _sig_handler(self, sig):
         for thread in self.threads:
-            if sig == signal.SIGUSR1:
-                thread.pause()
-            elif sig == signal.SIGUSR2:
-                thread.unpause()
+            thread.handle(sig)
+        if sig == signal.SIGUSR1:
+            self.active = False
+        elif sig == signal.SIGUSR2:
+            self.active = True
+            self._print_data()
         
     def _start_threads(self):
         config = ConfigParser()
@@ -909,8 +917,8 @@ class StatusBar():
             idn, entry = self.updates.get()
             self.updates.task_done()
             self.data[idn] = entry
-            
-            self._print_data()
+            if self.active:
+                self._print_data()
             
     def _print_data(self):
         items = [item for item in self.data if item]
@@ -923,7 +931,6 @@ class StatusBar():
         
         self._start_threads()
         self._handle_updates()
-        self._register_signals()
         
 
                 
