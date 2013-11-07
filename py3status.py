@@ -32,6 +32,7 @@ import ctypes
 import sys
 import pickle
 import signal
+import logging
 
 from mpd import MPDClient, ConnectionError
 import psutil
@@ -129,10 +130,13 @@ class WorkerThread(Thread):
     def run(self):
         '''Main worker loop.'''
         while True:
-            self.active.wait()
-            self._update_data()
-            self._fill_queue()
-            sleep(self.interval)
+            try:
+                self.active.wait()
+                self._update_data()
+                self._fill_queue()
+                sleep(self.interval)
+            except Exception as e:
+                logging.exception('Caught exception in the worker thread %s!', self.name)
 
 class ClickEventHandler(Thread):
     '''
@@ -147,23 +151,26 @@ class ClickEventHandler(Thread):
         
     def run(self):
         for event in sys.stdin:
-            if event.startswith('['):
-                continue
-            elif event.startswith(','):
-                event = event.lstrip(',')
-            
-            name = json.loads(event)['name']
-            
-            if name == self.event_name:
-                if self.calendar == None:
-                    self.on()
-                else:
-                    if self.calendar.poll() == None:
-                        self.off()
+            try:
+                if event.startswith('['):
+                    continue
+                elif event.startswith(','):
+                    event = event.lstrip(',')
+                
+                name = json.loads(event)['name']
+                
+                if name == self.event_name:
+                    if self.calendar == None:
+                        self.on()
                     else:
-                        self.on() #calendar killed outside
-            else:
-                pass
+                        if self.calendar.poll() == None:
+                            self.off()
+                        else:
+                            self.on() #calendar killed outside
+                else:
+                    pass
+            except Exception as e:
+                logging.exception('Caught exception in the click handler!')
     
     def on(self):
         self.calendar = Popen(self.calendar_name, stdout=DEVNULL)
@@ -296,20 +303,23 @@ class FIFObserver(Thread):
 
     def run(self):
         while True:
-            with open(self.fullpath) as fifo:
-                # Should be a string 'TARGET:COMMAND', so output will be
-                # a 2-item list
-                stuff = fifo.read().strip()
-            # Normalize commands
             try:
-                target, command = stuff.split(':')
-            except ValueError:
-                # Wrong thingie, ignore it
-                pass
-            else:
-                target, command = target.lower(), command.lower()
-                if target in self._commands:
-                    self._commands[target].put(command)
+                with open(self.fullpath) as fifo:
+                    # Should be a string 'TARGET:COMMAND', so output will be
+                    # a 2-item list
+                    stuff = fifo.read().strip()
+                # Normalize commands
+                try:
+                    target, command = stuff.split(':')
+                except ValueError:
+                    # Wrong thingie, ignore it
+                    pass
+                else:
+                    target, command = target.lower(), command.lower()
+                    if target in self._commands:
+                        self._commands[target].put(command)
+            except Exception as e:
+                logging.exception('Caught exception in the observer!')
 
 
 class MPDCurrentSong(WorkerThread):
@@ -844,10 +854,19 @@ class StatusBar():
                     '/etc/py3status.conf'
                     ])
         
+        #Initialize logging
+        logfile = config['DEFAULT'].pop('logfile')
+        loglevel = getattr(logging, config['DEFAULT'].pop('loglevel').upper())
+        logging.basicConfig(filename=logfile, level=loglevel, format='%(asctime)s %(levelname)s : %(message)s')
+        logging.info('Begin logging.')
+        
+        #Observer
         self.observer = FIFObserver()
         self.clickeventhandler = ClickEventHandler()
         self.observer.start()
+        logging.info('Started Observer')
         self.clickeventhandler.start()
+        logging.info('Started Click Handler')
         
         order = config['DEFAULT'].pop('order').split()
         separator = config['DEFAULT'].getboolean('separator')
@@ -869,6 +888,7 @@ class StatusBar():
             arguments = dict(list(arguments.items()) + list(config[entry].items()))
             self.threads.append(globals()[class_type](**arguments))
             self.data.append(None)
+            logging.info('Started thread %s', self.threads[i].name)
             self.threads[i].start()
             
     
@@ -889,10 +909,12 @@ class StatusBar():
         
     def run(self):
         print('{"version":1, "click_events": true, "stop_signal": 10, "cont_signal": 12 }\n[', flush=True)
-        
-        self._start_threads()
-        self._handle_updates()
-        
+        try:
+            self._start_threads()
+            self._handle_updates()
+        except Exception as e:
+            logging.exception('Caught exception in the main thread!')
+            sys.exit(1)
 
                 
 if __name__ == '__main__':
